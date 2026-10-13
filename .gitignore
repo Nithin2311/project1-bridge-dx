@@ -1,0 +1,37 @@
+# data: never
+data/
+*.csv
+*.csv.gz
+*.parquet
+*.duckdb
+*.zip
+.cache/
+outputs/*
+!outputs/.gitkeep
+# allow small node/edge exports only if explicitly whitelisted later
+
+# python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# notebooks checkpoints
+.ipynb_checkpoints/
+
+# latex
+report/*.aux
+report/*.log
+report/*.out
+report/*.bbl
+report/*.blg
+report/*.synctex.gz
+report/*.fdb_latexmk
+report/*.fls
+
+# os / editor
+.DS_Store
+.vscode/
+.idea/

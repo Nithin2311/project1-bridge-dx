@@ -1,0 +1,69 @@
+# Option A — locked parameters (from "Project 1 Ideas proposal.docx", Oct 8 2026).
+# Change here, never in code. Every script reads this file.
+
+cohort:
+  era: icd10                 # primary cohort = ICD-10 era
+  era_start: "2015-10-01"    # hospital switched ICD-9 -> ICD-10
+  min_distinct_categories: 5 # patient must have >= 5 distinct 3-char categories
+  drop_events_after_death: true
+  dedupe_to: [person_id, category]   # collapse 749k duplicate rows before counting anything
+
+nodes:
+  level: icd10_3char         # e.g. I10, E11, F41, N18
+  min_prevalence: 0.01       # >= 1% of cohort patients
+  names_from: concept.csv
+  flag_chapters: [R, Z]      # symptom / status codes: keep, flag, rerun without (see sensitivity)
+
+edges:
+  cooccurrence: same_patient # any time in the era (not same-visit) for the main graph
+  min_shared_patients: 10
+  test: fisher_exact
+  correction: bonferroni
+  alpha: 0.05
+  min_odds_ratio: 1.2
+  weight: phi                # main weight
+  weight_check: jaccard
+  betweenness_distance: inverse_phi
+
+communities:
+  algorithm: leiden          # report louvain too
+  resolution: 1.0
+  seeds: [0, 1, 2, 3, 4]     # stability check
+  null_model:
+    kind: degree_preserving_rewire
+    n: 100
+
+centrality:
+  betweenness: weighted      # distance = 1/phi
+  null_percentile: true
+  roles: guimera_amaral      # participation coefficient + within-module degree z
+  prevalence_residual: true  # degree ~ prevalence, report residuals
+
+subgroups:
+  same_node_set: true
+  groups:
+    sex: [female, male]
+    age: {cut: 65, labels: [under65, over65]}   # age at index (define: age at first ICD-10-era dx)
+  comparison:
+    partition: adjusted_rand_index
+    connectors: top_k_overlap
+    top_k: 20
+    edge_test: permutation
+    n_permutations: 1000
+
+sensitivity:
+  - drop_chapters_RZ
+  - icd9_bridged_appendix    # 2008-2015 rows mapped via SNOMED (78% bridge)
+  - stratify_by_n_categories # unequal follow-up
+
+project2:
+  index_date_rule: TBD       # must be written down once; both teammates run it
+  horizon_months: 6          # fall back to 12 or "any new community" if positives < 150
+  censoring: exclude_death_or_record_end_inside_horizon
+  min_positives: 150
+
+paths:
+  data_env: EHRSHOT_DATA
+  data_default: ../FinalProject/data
+  cache: .cache/ehrshot.duckdb
+  outputs: outputs
