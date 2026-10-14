@@ -37,7 +37,7 @@ Default data path if `EHRSHOT_DATA` is unset: `../FinalProject/data` relative to
 | Step | Script | Status |
 |---|---|---|
 | 0 | `00_check_data.py` — verify CSVs, row counts, DuckDB cache | works |
-| 1 | `01_cohort.py` — ICD-10 era, dedupe (patient, category), drop post-death, ≥5 categories, nodes ≥1% | stub |
+| 1 | `01_cohort.py` — ICD-10 era, dedupe (patient, category), drop post-death, ≥5 categories, nodes ≥1% | works (4,131 pts, 601 nodes) |
 | 2 | `02_edges.py` — Fisher + Bonferroni + OR≥1.2 + ≥10 patients; phi, Jaccard | stub |
 | 3 | `03_graph.py` — build graph, export node/edge CSVs | stub |
 | 4 | `04_communities.py` — Leiden (+Louvain), modularity vs 100 rewired nulls, naming | stub |
