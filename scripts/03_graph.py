@@ -1,7 +1,9 @@
 """Step 3: build + export graph.
 
-Reads outputs/nodes.csv + outputs/edges.csv (kept edges only), builds the phi-weighted NetworkX graph,
-writes outputs/graph_main.graphml, outputs/graph_nodes.csv, outputs/graph_edges.csv, outputs/graph_stats.csv.
+Reads outputs/nodes.csv + outputs/edges.csv (kept edges only) and builds two phi-weighted graphs:
+  graph_full.graphml  all 601 nodes (R/Z flagged nodes included)        -> sensitivity
+  graph_main.graphml  flagged nodes dropped if cfg nodes.main_graph_drops_flagged -> every main analysis
+Deliverables graph_nodes.csv / graph_edges.csv describe the main graph. graph_stats.csv has both.
 Rerunnable: `uv run python scripts/03_graph.py` (after 01, 02).
 """
 from __future__ import annotations
@@ -18,32 +20,34 @@ t0 = time.time()
 
 nodes = pl.read_csv(out / "nodes.csv")
 edges = pl.read_csv(out / "edges.csv")
-g = graph.build(nodes, edges, weight=cfg["edges"]["weight"])
+g_full = graph.build(nodes, edges, weight=cfg["edges"]["weight"])
+if cfg["nodes"].get("main_graph_drops_flagged", False):
+    g_main = g_full.subgraph([v for v, d in g_full.nodes(data=True) if not d.get("flagged")]).copy()
+else:
+    g_main = g_full
 
-stats = graph.basic_stats(g)
-pl.DataFrame({"stat": list(stats), "value": [float(v) for v in stats.values()]}).write_csv(out / "graph_stats.csv")
-graph.write_graphml(g, out / "graph_main.graphml")
-nt = graph.node_table(g)
-et = graph.edge_table(g)
+rows = []
+for name, g in [("main", g_main), ("full", g_full)]:
+    stats = graph.basic_stats(g)
+    rows += [{"graph": name, "stat": k, "value": float(v)} for k, v in stats.items()]
+    graph.write_graphml(g, out / f"graph_{name}.graphml")
+    print(f"\n{name} graph: {stats['n_nodes']} nodes, {stats['n_edges']:,} edges, weight = {cfg['edges']['weight']}")
+    for k, v in stats.items():
+        print(f"  {k:28s} {v:,.4f}" if isinstance(v, float) else f"  {k:28s} {v:,}")
+pl.DataFrame(rows).write_csv(out / "graph_stats.csv")
+
+nt = graph.node_table(g_main)
+et = graph.edge_table(g_main)
 nt.write_csv(out / "graph_nodes.csv")
 et.write_csv(out / "graph_edges.csv")
 
-print(f"graph: {stats['n_nodes']} nodes, {stats['n_edges']:,} edges, weight = {cfg['edges']['weight']}")
-for k, v in stats.items():
-    print(f"  {k:28s} {v:,.4f}" if isinstance(v, float) else f"  {k:28s} {v:,}")
-
-print("\ntop 10 nodes by degree:")
+print("\nmain graph, top 10 nodes by degree:")
 for r in nt.head(10).iter_rows(named=True):
-    print(f"  {r['category']}  {r['name'][:45]:45s} deg={r['degree']:>3}  wdeg={r['weighted_degree']:.1f}  "
-          f"prev={r['prevalence']:.2f}  clus={r['clustering']:.2f}{'  [R/Z]' if r['flagged'] else ''}")
-print("\ntop 10 nodes by weighted degree:")
+    print(f"  {r['category']}  {r['name'][:45]:45s} deg={r['degree']:>3}  wdeg={r['weighted_degree']:.1f}  prev={r['prevalence']:.2f}  clus={r['clustering']:.2f}")
+print("main graph, top 10 nodes by weighted degree:")
 for r in nt.sort("weighted_degree", descending=True).head(10).iter_rows(named=True):
-    print(f"  {r['category']}  {r['name'][:45]:45s} deg={r['degree']:>3}  wdeg={r['weighted_degree']:.1f}  "
-          f"prev={r['prevalence']:.2f}{'  [R/Z]' if r['flagged'] else ''}")
+    print(f"  {r['category']}  {r['name'][:45]:45s} deg={r['degree']:>3}  wdeg={r['weighted_degree']:.1f}  prev={r['prevalence']:.2f}")
 iso = nt.filter(pl.col("degree") == 0)
 if iso.height:
-    print("\nisolates:", ", ".join(f"{r['category']} ({r['name'][:30]}, prev {r['prevalence']:.3f})" for r in iso.iter_rows(named=True)))
-
-h = graph.to_igraph(g)
-print(f"\nigraph copy: {h.vcount()} vertices, {h.ecount()} edges")
-print(f"wrote graph_main.graphml, graph_nodes.csv, graph_edges.csv, graph_stats.csv to {out}  ({time.time()-t0:.0f}s)")
+    print("isolates:", ", ".join(f"{r['category']} ({r['name'][:30]}, prev {r['prevalence']:.3f})" for r in iso.iter_rows(named=True)))
+print(f"\nwrote graph_main.graphml, graph_full.graphml, graph_nodes.csv, graph_edges.csv, graph_stats.csv to {out}  ({time.time()-t0:.0f}s)")

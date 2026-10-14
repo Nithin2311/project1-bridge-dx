@@ -12,7 +12,11 @@ nodes:
   level: icd10_3char         # e.g. I10, E11, F41, N18
   min_prevalence: 0.01       # >= 1% of cohort patients
   names_from: concept.csv
-  flag_chapters: [R, Z]      # symptom / status codes: keep, flag, rerun without (see sensitivity)
+  flag_chapters: [R, Z]      # symptom / status codes: flagged in nodes.csv, dropped from the main graph
+  # decided 2026-10-14 after step 4: main graph EXCLUDES flagged (R/Z) nodes (508 nodes). Reason: higher
+  # modularity (0.367 vs 0.295 at res 1.0), more seed-stable Leiden (ARI 0.84-1.00 vs 0.74-0.92), cleaner
+  # communities; ARI 0.83 between the two partitions so structure is unchanged. Full 601-node graph = sensitivity.
+  main_graph_drops_flagged: true
 
 edges:
   cooccurrence: same_patient # any time in the era (not same-visit) for the main graph
@@ -27,7 +31,13 @@ edges:
 
 communities:
   algorithm: leiden          # report louvain too
-  resolution: 1.0
+  # decided 2026-10-14 after step 4: resolution 2.0 (RB configuration model; 1.0 = plain modularity).
+  # At 1.0 the three target clusters do not exist as modules (cardiometabolic inside a 121-node heart-failure
+  # module, mental health inside a 179-node musculoskeletal module). At 2.0 all three are explicit modules,
+  # seed ARI 0.83-0.94, z vs null 182. 1.0 and 1.5 reported as resolution sensitivity.
+  resolution: 2.0
+  resolution_sensitivity: [1.0, 1.5]
+  min_community_size_in_tables: 5   # smaller communities grouped as "other" in report tables
   seeds: [0, 1, 2, 3, 4]     # stability check
   null_model:
     kind: degree_preserving_rewire
@@ -67,7 +77,8 @@ figures:
   top_k: 5
 
 sensitivity:
-  - drop_chapters_RZ
+  - keep_chapters_RZ          # full 601-node graph incl. R/Z (was the main graph until 2026-10-14)
+  - resolution_sweep          # Leiden at 1.0 and 1.5
   - icd9_bridged_appendix    # 2008-2015 rows mapped via SNOMED (78% bridge)
   - stratify_by_n_categories # unequal follow-up
 
