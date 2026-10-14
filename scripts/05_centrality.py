@@ -60,3 +60,29 @@ print("\nbottom 5 degree residual (prevalence hubs: common but not well connecte
 for r in df.sort("degree_residual_z").head(5).iter_rows(named=True):
     print(row(r))
 print(f"\nwrote {out/'centrality.csv'}  ({time.time()-t0:.0f}s)")
+
+# --- cluster-to-cluster bridges (the research question) ---
+anchors = cfg["centrality"]["target_clusters"]
+clusters = ce.target_clusters(partition, anchors)
+names = dict(zip(meta["category"], meta["name"]))
+print("\ntarget clusters (union of communities holding the anchor codes):")
+for k, members in clusters.items():
+    cs = sorted({partition[v] for v in members})
+    print(f"  {k:16s} communities {cs}  {len(members)} nodes: " + ", ".join(sorted(members)[:12]) + (" ..." if len(members) > 12 else ""))
+br = ce.cluster_bridges(g, clusters)
+br = br.join(meta, on="category").join(df.select("category", "community", "degree", "prevalence", "bt_null_z"), on="category")
+br.write_csv(out / "bridges.csv")
+de = ce.direct_cluster_edges(g, clusters)
+de.write_csv(out / "bridges_direct_edges.csv")
+k = int(cfg["centrality"].get("bridge_top_k", 15))
+for pair in br["pair"].unique().sort():
+    sub = br.filter(pl.col("pair") == pair)
+    a, b = pair.split("-")
+    print(f"\n{pair}: direct edges between the clusters = {de.filter(pl.col('pair') == pair).height}; top {k} bridge nodes by restricted betweenness:")
+    for r in sub.head(k).iter_rows(named=True):
+        print(f"  {r['category']:4s} {str(r['name'])[:36]:36s} c{r['community']:<2} bt_AB={r['bridge_betweenness']:.4f}  "
+              f"share->{a[:5]}={r['share_to_a']:.2f} share->{b[:5]}={r['share_to_b']:.2f}  deg={r['degree']:3d} prev={r['prevalence']:.2f}")
+    top_direct = de.filter(pl.col("pair") == pair).head(5)
+    if top_direct.height:
+        print("  strongest direct edges: " + "; ".join(f"{r['u']}-{r['v']} phi={r['phi']:.2f}" for r in top_direct.iter_rows(named=True)))
+print(f"wrote {out/'bridges.csv'}, {out/'bridges_direct_edges.csv'}")

@@ -48,6 +48,16 @@ centrality:
   null_percentile: true
   roles: guimera_amaral      # participation coefficient + within-module degree z
   prevalence_residual: true  # degree ~ prevalence, report residuals
+  # decided 2026-10-14 after step 5: Guimera-Amaral roles are reported but are uninformative on this graph
+  # (density 0.10, 27 modules -> participation median 0.75, one node with within-module z >= 2.5).
+  # The bridge question is answered directly: betweenness restricted to shortest paths between two target
+  # clusters (nx.betweenness_centrality_subset), plus each node's phi-weight share into each cluster.
+  # A target cluster = union of the Leiden communities (main partition) that contain its anchor codes.
+  target_clusters:
+    cardiometabolic: [E11, I50]   # diabetes/hypertension/lipids module + heart failure/CKD/arrhythmia module
+    cancer: [C79, D70]            # metastatic-disease module + hematologic/chemo-toxicity module
+    mental_health: [F32]          # depression/anxiety/sleep module
+  bridge_top_k: 15
 
 subgroups:
   same_node_set: true

@@ -48,3 +48,14 @@ def test_prevalence_residual():
     assert df.height == g.number_of_nodes()
     assert abs(df["degree_residual"].sum()) < 1e-9  # OLS residuals sum to zero
     assert "degree_r2" in df.columns and 0 <= df["degree_r2"][0] <= 1
+
+
+def test_target_clusters_and_bridges():
+    g, part = _barbell()
+    cl = ce.target_clusters(part, {"A": ["a1"], "B": ["b1"]})
+    assert cl["A"] == {f"a{i}" for i in range(5)} | {"x"} and cl["B"] == {f"b{i}" for i in range(5)}
+    cl2 = {"A": {f"a{i}" for i in range(5)}, "B": {f"b{i}" for i in range(5)}}
+    br = ce.cluster_bridges(g, cl2)
+    assert br.height == 1 and br["category"][0] == "x" and br["bridge_betweenness"][0] > 0
+    assert br["share_to_a"][0] == 0.5 and br["min_share"][0] == 0.5
+    assert ce.direct_cluster_edges(g, cl2).height == 0

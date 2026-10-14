@@ -132,3 +132,58 @@ def prevalence_residual(g: nx.Graph) -> pl.DataFrame:
         out[f"{col}_residual_z"] = resid / resid.std(ddof=1)
         out[f"{col}_r2"] = np.full(len(nodes), 1 - ss_res / ss_tot if ss_tot else 0.0)
     return pl.DataFrame(out)
+
+
+def target_clusters(partition: dict, anchors: dict[str, list[str]]) -> dict[str, set]:
+    """cluster name -> set of nodes = union of communities containing the anchor codes."""
+    comms = defaultdict(set)
+    for v, c in partition.items():
+        comms[c].add(v)
+    out = {}
+    for name, codes in anchors.items():
+        members = set()
+        for code in codes:
+            if code in partition:
+                members |= comms[partition[code]]
+        out[name] = members
+    return out
+
+
+def cluster_bridges(g: nx.Graph, clusters: dict[str, set]) -> pl.DataFrame:
+    """For every pair of target clusters: betweenness restricted to shortest paths (distance 1/phi) from
+    cluster A nodes to cluster B nodes, for nodes outside both clusters; plus each node's phi-weight share
+    into A and into B (share of its weighted degree). One row per (pair, node)."""
+    names = list(clusters)
+    wdeg = dict(g.degree(weight="weight"))
+    rows = []
+    for i in range(len(names)):
+        for j in range(i + 1, len(names)):
+            a, b = names[i], names[j]
+            A, B = clusters[a], clusters[b]
+            bt = nx.betweenness_centrality_subset(g, sources=list(A), targets=list(B), weight="distance", normalized=True)
+            for v in g.nodes:
+                if v in A or v in B:
+                    continue
+                w_a = sum(g[v][u]["weight"] for u in g.neighbors(v) if u in A)
+                w_b = sum(g[v][u]["weight"] for u in g.neighbors(v) if u in B)
+                rows.append({"pair": f"{a}-{b}", "category": v, "bridge_betweenness": bt[v],
+                             "w_to_a": w_a, "w_to_b": w_b,
+                             "share_to_a": w_a / wdeg[v] if wdeg[v] else 0.0,
+                             "share_to_b": w_b / wdeg[v] if wdeg[v] else 0.0,
+                             "min_share": min(w_a, w_b) / wdeg[v] if wdeg[v] else 0.0})
+    return pl.DataFrame(rows).sort("pair", "bridge_betweenness", descending=[False, True])
+
+
+def direct_cluster_edges(g: nx.Graph, clusters: dict[str, set]) -> pl.DataFrame:
+    """Edges that join two target clusters directly, by phi."""
+    names = list(clusters)
+    rows = []
+    for i in range(len(names)):
+        for j in range(i + 1, len(names)):
+            a, b = names[i], names[j]
+            for u in clusters[a]:
+                for v in g.neighbors(u):
+                    if v in clusters[b]:
+                        rows.append({"pair": f"{a}-{b}", "u": u, "v": v, "phi": g[u][v]["weight"], "n_both": g[u][v].get("n_both")})
+    return pl.DataFrame(rows).sort("pair", "phi", descending=[False, True]) if rows else pl.DataFrame(
+        schema={"pair": pl.Utf8, "u": pl.Utf8, "v": pl.Utf8, "phi": pl.Float64, "n_both": pl.Int64})
