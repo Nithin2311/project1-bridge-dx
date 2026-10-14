@@ -44,5 +44,18 @@ Default data path if `EHRSHOT_DATA` is unset: `../FinalProject/data` relative to
 | 5 | `05_centrality.py` — weighted betweenness w/ null, roles, prevalence residual, cluster-to-cluster bridges | works (centrality.csv, bridges.csv) |
 | 6 | `06_subgroups.py` — F/M, <65/≥65 graphs; ARI, top-20 overlap, edge-wise permutation | works (5,000 perms; 252 sex-, 284 age-specific edges at FDR 0.05) |
 | 7 | `07_sensitivity.py` — ICD-9 bridged appendix graph, follow-up tertiles, summary with full-graph + resolution sweep | works (sensitivity_summary.csv) |
-| 8 | `08_figures.py` — figures and tables for the report | stub |
-| 9 | `09_p2_labels.py` — community-entry label counts for the Project 2 paragraph | stub |
+| 8 | `08_figures.py` — figures (pdf+png) and LaTeX tables | works (8 figures, 7 tables in outputs/tables) |
+| 9 | `09_p2_labels.py` — community-entry label counts for the Project 2 paragraph | works (p2_label_counts.csv; 2 index rules x 2 horizons) |
+
+## Run everything from the raw CSVs
+
+```bash
+uv sync
+for s in scripts/0[0-9]_*.py; do uv run python "$s"; done   # ~40 min; step 4 (100 null Leiden runs on 2 graphs) is the slow one
+uv run pytest -q                                           # unit tests on synthetic data, no EHRShot needed
+```
+
+Decisions made after the proposal (each is recorded with its reason in `config/option_a.yaml`):
+main graph drops R/Z chapter nodes (full graph kept as sensitivity); Leiden resolution 2.0 (1.0 and 1.5 as
+sensitivity); 5,000 label permutations; age at index = age at first ICD-10-era diagnosis; target clusters
+defined by anchor codes; bridges measured by cluster-restricted betweenness.

@@ -93,7 +93,12 @@ sensitivity:
   - stratify_by_n_categories # unequal follow-up
 
 project2:
-  index_date_rule: TBD       # must be written down once; both teammates run it
+  index_date_rule: TBD       # must be written down once; both teammates run it. Candidates computed by 09:
+  index_rule_candidates:
+    history_1y: first ICD-10-era diagnosis date + 365 days          # every cohort patient gets an index
+    calendar_2019: "2019-01-01"                                     # fixed date; needs >= 1 dx before it
+  record_end: last condition_start_DATE of the patient (any era)   # only half the patients have observation_period
+  targets: target_clusters from centrality + every main community with >= min_community_size_in_tables nodes
   horizon_months: 6          # fall back to 12 or "any new community" if positives < 150
   censoring: exclude_death_or_record_end_inside_horizon
   min_positives: 150
