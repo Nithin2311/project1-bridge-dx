@@ -43,6 +43,6 @@ Default data path if `EHRSHOT_DATA` is unset: `../FinalProject/data` relative to
 | 4 | `04_communities.py` — Leiden (+Louvain), modularity vs 100 rewired nulls, naming | works (main: 27 comms at res 2.0, Q=0.212, z=190; full + res 1.0/1.5 sensitivity) |
 | 5 | `05_centrality.py` — weighted betweenness w/ null, roles, prevalence residual, cluster-to-cluster bridges | works (centrality.csv, bridges.csv) |
 | 6 | `06_subgroups.py` — F/M, <65/≥65 graphs; ARI, top-20 overlap, edge-wise permutation | works (5,000 perms; 252 sex-, 284 age-specific edges at FDR 0.05) |
-| 7 | `07_sensitivity.py` — drop R/Z chapters; ICD-9 bridged appendix | stub |
+| 7 | `07_sensitivity.py` — ICD-9 bridged appendix graph, follow-up tertiles, summary with full-graph + resolution sweep | works (sensitivity_summary.csv) |
 | 8 | `08_figures.py` — figures and tables for the report | stub |
 | 9 | `09_p2_labels.py` — community-entry label counts for the Project 2 paragraph | stub |
