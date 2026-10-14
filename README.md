@@ -40,7 +40,7 @@ Default data path if `EHRSHOT_DATA` is unset: `../FinalProject/data` relative to
 | 1 | `01_cohort.py` — ICD-10 era, dedupe (patient, category), drop post-death, ≥5 categories, nodes ≥1% | works (4,131 pts, 601 nodes) |
 | 2 | `02_edges.py` — Fisher + Bonferroni + OR≥1.2 + ≥10 patients; phi, Jaccard | works (24,137 kept of 180,300 pairs) |
 | 3 | `03_graph.py` — build graph, export node/edge CSVs | works (density 0.134, 1 isolate) |
-| 4 | `04_communities.py` — Leiden (+Louvain), modularity vs 100 rewired nulls, naming | works (main 8 comms Q=0.295; noRZ 9 comms Q=0.367) |
+| 4 | `04_communities.py` — Leiden (+Louvain), modularity vs 100 rewired nulls, naming | works (main: 27 comms at res 2.0, Q=0.212, z=190; full + res 1.0/1.5 sensitivity) |
 | 5 | `05_centrality.py` — weighted betweenness w/ null, participation coef, within-module degree, prevalence residual | stub |
 | 6 | `06_subgroups.py` — F/M, <65/≥65 graphs; ARI, top-20 overlap, edge-wise permutation | stub |
 | 7 | `07_sensitivity.py` — drop R/Z chapters; ICD-9 bridged appendix | stub |
