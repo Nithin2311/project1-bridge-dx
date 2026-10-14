@@ -56,13 +56,17 @@ for name, members in sg.subgroup_members(labels, cfg).items():
     st = gr.basic_stats(g)
     br = ce.cluster_bridges(g, clusters).with_columns(pl.lit(name).alias("subgroup"))
     results[name] = {"graph": g, "partition": p, "top_bt": top_bt, "stats": st, "bridges": br, "betweenness": bt}
+    non_iso = [v for v in g.nodes if g.degree(v) > 0]
     rows.append({"subgroup": name, "n_patients": len(members), "n_edges": g.number_of_edges(), "density": st["density"],
                  "avg_clustering": st["avg_clustering"], "n_isolates": st["n_isolates"], "n_components": st["n_components"],
-                 "n_communities": len(set(p.values())), "q": cm.modularity(g, p, cfg),
+                 "n_communities": len(set(p.values())), "n_communities_ge5": sum(1 for c in set(p.values()) if sum(1 for v in p if p[v] == c) >= 5),
+                 "rb_quality": cm.modularity(g, p, cfg), "q_standard": cm.modularity_standard(g, p),
                  "ari_vs_main": sg.compare_partitions(part_main, p),
+                 "ari_vs_main_non_isolates": sg.compare_partitions(part_main, p, non_iso),
                  "top20_bt_overlap_vs_main": sg.connector_overlap(results["main"]["top_bt"], top_bt, k_top)})
     print(f"  {name:8s} n={len(members):,} edges={g.number_of_edges():,} density={st['density']:.3f} isolates={st['n_isolates']} "
-          f"communities={len(set(p.values()))} Q={rows[-1]['q']:.3f} ARI_vs_main={rows[-1]['ari_vs_main']:.3f} "
+          f"communities={len(set(p.values()))} (>=5: {rows[-1]['n_communities_ge5']}) Q={rows[-1]['q_standard']:.3f} "
+          f"ARI_vs_main={rows[-1]['ari_vs_main']:.3f} (non-isolates {rows[-1]['ari_vs_main_non_isolates']:.3f}) "
           f"top{k_top}_bt_overlap_vs_main={rows[-1]['top20_bt_overlap_vs_main']:.2f}  ({time.time()-t1:.0f}s)")
 summary = pl.DataFrame(rows)
 
@@ -72,7 +76,9 @@ cmp_rows = []
 for a, b, col in pairs_cmp:
     ra, rb = results[a], results[b]
     ea, eb = set(map(frozenset, ra["graph"].edges)), set(map(frozenset, rb["graph"].edges))
+    non_iso = [v for v in g_main.nodes if ra["graph"].degree(v) > 0 and rb["graph"].degree(v) > 0]
     cmp_rows.append({"comparison": f"{a}-{b}", "ari": sg.compare_partitions(ra["partition"], rb["partition"]),
+                     "ari_non_isolates": sg.compare_partitions(ra["partition"], rb["partition"], non_iso),
                      f"top{k_top}_bt_overlap": sg.connector_overlap(ra["top_bt"], rb["top_bt"], k_top),
                      "edges_only_a": len(ea - eb), "edges_only_b": len(eb - ea), "edges_both": len(ea & eb),
                      "jaccard_edges": len(ea & eb) / len(ea | eb)})
@@ -81,7 +87,7 @@ summary.write_csv(out / "subgroup_comparison.csv")
 cmp.write_csv(out / "subgroup_pairwise.csv")
 print("\npairwise:")
 for r in cmp.iter_rows(named=True):
-    print(f"  {r['comparison']:16s} ARI={r['ari']:.3f}  top{k_top} betweenness overlap={r[f'top{k_top}_bt_overlap']:.2f}  "
+    print(f"  {r['comparison']:16s} ARI={r['ari']:.3f} (non-isolates {r['ari_non_isolates']:.3f})  top{k_top} betweenness overlap={r[f'top{k_top}_bt_overlap']:.2f}  "
           f"edges only {r['comparison'].split('-')[0]}={r['edges_only_a']:,}, only {r['comparison'].split('-')[1]}={r['edges_only_b']:,}, both={r['edges_both']:,} (Jaccard {r['jaccard_edges']:.2f})")
 
 # top-k connectors per subgroup
@@ -117,16 +123,23 @@ for a, b, col in pairs_cmp:
           f"{n_raw:,} edges p<{alpha} raw, {n_sig:,} at FDR<{alpha}  ({time.time()-t1:.0f}s)")
     sig = pt.filter(pl.col("p_fdr") < alpha)
     cl_of = {v: k for k, members in clusters.items() for v in members}
+    ranges = cfg["nodes"].get("sex_specific_ranges", [])
     sig = sig.with_columns(pl.col("u").replace_strict(cl_of, default=None).alias("cluster_u"),
-                           pl.col("v").replace_strict(cl_of, default=None).alias("cluster_v"))
+                           pl.col("v").replace_strict(cl_of, default=None).alias("cluster_v"),
+                           (pl.col("u").map_elements(lambda c: sg.in_ranges(c, ranges), return_dtype=pl.Boolean)
+                            | pl.col("v").map_elements(lambda c: sg.in_ranges(c, ranges), return_dtype=pl.Boolean)).alias("sex_specific"))
     sig.write_csv(out / f"subgroup_edge_permutation_{tag}_significant.csv")
+    n_sexspec = int(sig["sex_specific"].sum())
+    print(f"  {n_sexspec} of {sig.height} significant edges involve a reproductive / sex-organ category (nodes.sex_specific_ranges); "
+          f"{sig.height - n_sexspec} remain")
+    sig = sig.filter(~pl.col("sex_specific"))
     touch = sig.filter(pl.col("cluster_u").is_not_null() | pl.col("cluster_v").is_not_null())
     cross = touch.filter(pl.col("cluster_u").is_not_null() & pl.col("cluster_v").is_not_null() & (pl.col("cluster_u") != pl.col("cluster_v")))
     print(f"  of these, {touch.height} touch a target cluster and {cross.height} join two different target clusters")
-    print(f"  direction: {int((sig['diff'] > 0).sum())} stronger in {a}, {int((sig['diff'] < 0).sum())} stronger in {b}; "
+    print(f"  excluding sex-specific edges: {int((sig['diff'] > 0).sum())} stronger in {a}, {int((sig['diff'] < 0).sum())} stronger in {b}; "
           f"touching a target cluster: {int((touch['diff'] > 0).sum())} stronger in {a}, {int((touch['diff'] < 0).sum())} stronger in {b}")
-    for lab, df_ in [(f"stronger in {a}, all", sig.filter(pl.col("diff") > 0).sort("diff", descending=True).head(6)),
-                     (f"stronger in {b}, all", sig.filter(pl.col("diff") < 0).sort("diff").head(6)),
+    for lab, df_ in [(f"stronger in {a}, non-sex-specific", sig.filter(pl.col("diff") > 0).sort("diff", descending=True).head(6)),
+                     (f"stronger in {b}, non-sex-specific", sig.filter(pl.col("diff") < 0).sort("diff").head(6)),
                      (f"stronger in {a}, touching a target cluster", touch.filter(pl.col("diff") > 0).sort("diff", descending=True).head(10)),
                      (f"stronger in {b}, touching a target cluster", touch.filter(pl.col("diff") < 0).sort("diff").head(10))]:
         print(f"  {lab}:")

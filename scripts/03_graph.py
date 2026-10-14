@@ -1,8 +1,8 @@
 """Step 3: build + export graph.
 
 Reads outputs/nodes.csv + outputs/edges.csv (kept edges only) and builds two phi-weighted graphs:
-  graph_full.graphml  all 601 nodes (R/Z flagged nodes included)        -> sensitivity
-  graph_main.graphml  flagged nodes dropped if cfg nodes.main_graph_drops_flagged -> every main analysis
+  graph_full.graphml  all 601 nodes                                          -> sensitivity
+  graph_main.graphml  chapters in cfg nodes.main_graph_excludes_chapters dropped -> every main analysis
 Deliverables graph_nodes.csv / graph_edges.csv describe the main graph. graph_stats.csv has both.
 Rerunnable: `uv run python scripts/03_graph.py` (after 01, 02).
 """
@@ -21,10 +21,9 @@ t0 = time.time()
 nodes = pl.read_csv(out / "nodes.csv")
 edges = pl.read_csv(out / "edges.csv")
 g_full = graph.build(nodes, edges, weight=cfg["edges"]["weight"])
-if cfg["nodes"].get("main_graph_drops_flagged", False):
-    g_main = g_full.subgraph([v for v, d in g_full.nodes(data=True) if not d.get("flagged")]).copy()
-else:
-    g_main = g_full
+excl = set(cfg["nodes"].get("main_graph_excludes_chapters", []))
+g_main = g_full.subgraph([v for v in g_full.nodes if v[0] not in excl]).copy()
+print(f"main graph excludes chapters {sorted(excl)}: {g_full.number_of_nodes() - g_main.number_of_nodes()} nodes dropped")
 
 rows = []
 for name, g in [("main", g_main), ("full", g_full)]:

@@ -25,7 +25,7 @@ tests/                    small unit tests on synthetic data
 ## Setup
 
 ```bash
-uv sync
+uv sync --extra dev                                # dev extra = pytest, ruff, jupyter
 export EHRSHOT_DATA="/path/to/FinalProject/data"   # folder with the 13 CSVs
 uv run python scripts/00_check_data.py
 ```
@@ -50,8 +50,8 @@ Default data path if `EHRSHOT_DATA` is unset: `../FinalProject/data` relative to
 ## Run everything from the raw CSVs
 
 ```bash
-uv sync
-for s in scripts/0[0-9]_*.py; do uv run python "$s"; done   # ~40 min; step 4 (100 null Leiden runs on 2 graphs) is the slow one
+uv sync --extra dev
+for s in scripts/0[0-9]_*.py; do uv run python "$s"; done   # ~45 min; steps 4 and 5 (null models) are the slow ones
 uv run pytest -q                                           # unit tests on synthetic data, no EHRShot needed
 ```
 

@@ -112,14 +112,21 @@ def prevalence_residual_plot(df: pl.DataFrame, path, n_label: int = 8):
     _save(fig, path)
 
 
-def modularity_null_plot(q_null: np.ndarray, q_obs: float, path):
-    fig, ax = plt.subplots(figsize=(3.5, 2.2))
-    ax.hist(q_null, bins=20, color=PALETTE[0], alpha=0.8, edgecolor="white", linewidth=0.5)
+def modularity_null_plot(q_null: np.ndarray, q_obs: float, path, resolution: float = 1.0, q_standard: float | None = None):
+    """Null distribution of the RB quality at the working resolution (what Leiden optimises), observed value
+    marked; the null is drawn with its own x-range inset so the narrow distribution is visible."""
+    fig, ax = plt.subplots(figsize=(3.6, 2.3))
+    lo, hi = float(q_null.min()), float(q_null.max())
+    ax.hist(q_null, bins=20, color=PALETTE[0], alpha=0.85, edgecolor="white", linewidth=0.5)
     ax.axvline(q_obs, color=PALETTE[1], lw=1.5)
-    ax.annotate(f"observed Q = {q_obs:.3f}", (q_obs, ax.get_ylim()[1] * 0.9), fontsize=7, color=INK, ha="right", xytext=(-4, 0), textcoords="offset points")
-    ax.set_xlabel("modularity")
+    ax.set_xlim(min(lo, q_obs) - 0.01, max(hi, q_obs) + 0.01)
+    ax.annotate(f"observed {q_obs:.3f}\n(z = {(q_obs - q_null.mean()) / q_null.std(ddof=1):.0f})", (q_obs, ax.get_ylim()[1] * 0.85),
+                fontsize=7, color=INK, ha="right", xytext=(-4, 0), textcoords="offset points")
+    ax.annotate(f"null {q_null.mean():.3f} ± {q_null.std(ddof=1):.3f}", ((lo + hi) / 2, ax.get_ylim()[1] * 0.85), fontsize=7, color=INK2, ha="left", xytext=(6, 0), textcoords="offset points")
+    label = f"RB quality at γ = {resolution:g}" if resolution != 1.0 else "modularity Q"
+    ax.set_xlabel(label + (f"   (standard Q of the partition = {q_standard:.3f})" if q_standard is not None and resolution != 1.0 else ""))
     ax.set_ylabel("rewired graphs")
-    ax.set_title(f"Leiden modularity vs {len(q_null)} degree-preserving rewires", fontsize=8, color=INK2, loc="left")
+    ax.set_title(f"Leiden partition quality vs {len(q_null)} degree-preserving rewires", fontsize=8, color=INK2, loc="left")
     _save(fig, path)
 
 
@@ -181,7 +188,10 @@ def latex_table(df: pl.DataFrame, path, caption: str, label: str, col_fmt: dict 
     for row in df.iter_rows(named=True):
         cells = []
         for c, v in row.items():
-            cells.append(esc(col_fmt[c].format(v)) if c in col_fmt and v is not None else esc("" if v is None else v))
+            if v is None or (isinstance(v, float) and (v != v or v in (float("inf"), float("-inf")))):
+                cells.append("--" if v is None or v != v else ("$\\infty$" if v > 0 else "$-\\infty$"))
+            else:
+                cells.append(esc(col_fmt[c].format(v)) if c in col_fmt else esc(v))
         lines.append(" & ".join(cells) + " \\\\")
     lines += ["\\bottomrule", "\\end{tabular}", "\\end{table}", ""]
     with open(path, "w") as f:

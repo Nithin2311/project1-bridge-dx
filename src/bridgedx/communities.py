@@ -44,12 +44,20 @@ def _relabel(p: dict) -> dict:
     return {v: new[c] for v, c in p.items()}
 
 
-def modularity(g: nx.Graph, partition: dict, cfg: dict | None = None) -> float:
+def modularity(g: nx.Graph, partition: dict, cfg: dict | None = None, resolution: float | None = None) -> float:
+    """Reichardt-Bornholdt quality at `resolution` (default: cfg communities.resolution; 1.0 = standard
+    modularity Q). Leiden optimises this quantity and the rewired null is scored on it."""
     comms = {}
     for v, c in partition.items():
         comms.setdefault(c, set()).add(v)
-    res = float(cfg["communities"].get("resolution", 1.0)) if cfg else 1.0
-    return nx.community.modularity(g, list(comms.values()), weight="weight", resolution=res)
+    if resolution is None:
+        resolution = float(cfg["communities"].get("resolution", 1.0)) if cfg else 1.0
+    return nx.community.modularity(g, list(comms.values()), weight="weight", resolution=resolution)
+
+
+def modularity_standard(g: nx.Graph, partition: dict) -> float:
+    """Standard Newman-Girvan modularity (gamma = 1) of any partition, for reporting."""
+    return modularity(g, partition, resolution=1.0)
 
 
 def modularity_vs_null(g: nx.Graph, partition: dict, cfg: dict) -> dict:
@@ -65,7 +73,9 @@ def modularity_vs_null(g: nx.Graph, partition: dict, cfg: dict) -> dict:
         k_null.append(len(set(p.values())))
     q_null = np.array(q_null)
     return {
+        "resolution": float(cfg["communities"].get("resolution", 1.0)),
         "q_observed": q_obs,
+        "q_standard_observed": modularity_standard(g, partition),
         "n_communities_observed": len(set(partition.values())),
         "n_null": n,
         "q_null_mean": float(q_null.mean()),
@@ -84,7 +94,8 @@ def seed_stability(g: nx.Graph, cfg: dict) -> pl.DataFrame:
     parts = {s: leiden(g, cfg, seed=s) for s in seeds}
     base = parts[seeds[0]]
     nodes = list(g.nodes)
-    rows = [{"seed": s, "q": modularity(g, parts[s], cfg), "n_communities": len(set(parts[s].values())),
+    rows = [{"seed": s, "q": modularity(g, parts[s], cfg), "q_standard": modularity_standard(g, parts[s]),
+             "n_communities": len(set(parts[s].values())),
              "ari_vs_seed0": adjusted_rand_score([base[v] for v in nodes], [parts[s][v] for v in nodes])}
             for s in seeds]
     return pl.DataFrame(rows)

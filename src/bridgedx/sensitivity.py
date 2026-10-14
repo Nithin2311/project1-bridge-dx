@@ -13,39 +13,68 @@ from __future__ import annotations
 import polars as pl
 
 
-def build_snomed_bridge(con, max_levels: int = 3) -> pl.DataFrame:
-    """SNOMED concept_id -> ICD-10-CM 3-char category (direct, or via nearest mapped ancestor).
-    Registers temp table `snomed_bridge` (snomed_id, category, levels) and returns it."""
+def build_snomed_bridge(con, cfg: dict | None = None, min_era_rows: int = 5, max_levels: int = 3) -> pl.DataFrame:
+    """SNOMED concept_id -> ONE ICD-10-CM 3-char category. Registers temp table `snomed_bridge`
+    (snomed_id, category, source, purity) and returns it.
+      source = 'empirical': majority category among this hospital's own ICD-10-era rows carrying that
+               condition_concept_id (>= min_era_rows rows); purity = majority share
+      source = 'vocab':     fallback for concepts unseen in the era: vocabulary 'Maps to' (ICD10CM -> SNOMED read
+               backwards), accepted only when it yields exactly one category
+      source = 'ancestor':  last resort, nearest SNOMED ancestor (<= max_levels) with a single vocab category
+    The earlier pure-vocabulary bridge gave men pregnancy codes and 12% multi-category rows (review 2026-10-14)."""
+    if cfg is not None:
+        min_era_rows = int(cfg.get("sensitivity", {}).get("icd9_min_era_rows_per_concept", min_era_rows))
+    era_start = (cfg or {}).get("cohort", {}).get("era_start", "2015-10-01")
+    from . import cohort as _cohort
+    _cohort._register_category_map(con)
+    con.execute(f"""
+        create or replace temp table _empirical as
+        with rows as (
+            select co.condition_concept_id as snomed_id, m.category
+            from condition_occurrence co join cat_map m on m.sv = co.condition_source_value
+            where co.condition_start_DATE >= date '{era_start}' and co.condition_concept_id <> 0
+        ),
+        cnt as (select snomed_id, category, count(*) as n from rows group by 1, 2),
+        tot as (select snomed_id, sum(n) as n_total from cnt group by 1),
+        best as (select snomed_id, category, n, row_number() over (partition by snomed_id order by n desc, category) as rk from cnt)
+        select b.snomed_id, b.category, 'empirical' as source, b.n * 1.0 / t.n_total as purity
+        from best b join tot t using (snomed_id)
+        where b.rk = 1 and t.n_total >= {int(min_era_rows)}
+    """)
     con.execute("""
-        create or replace temp table _direct as
-        select distinct r.concept_id_2 as snomed_id, substr(c.concept_code, 1, 3) as category
-        from concept_relationship r
-        join concept c on c.concept_id = r.concept_id_1
-        where r.relationship_id = 'Maps to' and c.vocabulary_id = 'ICD10CM'
-          and (r.invalid_reason is null or r.invalid_reason = '')
+        create or replace temp table _vocab as
+        select snomed_id, min(category) as category, 'vocab' as source, 1.0 as purity
+        from (
+            select distinct r.concept_id_2 as snomed_id, substr(c.concept_code, 1, 3) as category
+            from concept_relationship r join concept c on c.concept_id = r.concept_id_1
+            where r.relationship_id = 'Maps to' and c.vocabulary_id = 'ICD10CM'
+        ) group by snomed_id having count(*) = 1
     """)
     con.execute("""
         create or replace temp table _need as
         select distinct condition_concept_id as snomed_id from condition_occurrence
-        where condition_concept_id <> 0 and condition_concept_id not in (select snomed_id from _direct)
+        where condition_concept_id <> 0
+          and condition_concept_id not in (select snomed_id from _empirical)
+          and condition_concept_id not in (select snomed_id from _vocab)
     """)
     con.execute(f"""
-        create or replace temp table _via_ancestor as
+        create or replace temp table _ancestor as
         with cand as (
-            select a.descendant_concept_id as snomed_id, d.category, a.min_levels_of_separation as levels
-            from _need n
-            join concept_ancestor a on a.descendant_concept_id = n.snomed_id
-            join _direct d on d.snomed_id = a.ancestor_concept_id
+            select a.descendant_concept_id as snomed_id, v.category, a.min_levels_of_separation as levels
+            from _need n join concept_ancestor a on a.descendant_concept_id = n.snomed_id
+            join _vocab v on v.snomed_id = a.ancestor_concept_id
             where a.min_levels_of_separation between 1 and {int(max_levels)}
         ),
-        best as (select snomed_id, min(levels) as levels from cand group by 1)
-        select distinct c.snomed_id, c.category, c.levels from cand c join best b using (snomed_id, levels)
+        best as (select snomed_id, min(levels) as levels from cand group by 1),
+        one as (select c.snomed_id, min(c.category) as category, count(distinct c.category) as k
+                from cand c join best b using (snomed_id, levels) group by 1)
+        select snomed_id, category, 'ancestor' as source, 1.0 as purity from one where k = 1
     """)
     con.execute("""
         create or replace temp table snomed_bridge as
-        select snomed_id, category, 0 as levels from _direct
-        union all
-        select snomed_id, category, levels from _via_ancestor
+        select * from _empirical
+        union all select * from _vocab where snomed_id not in (select snomed_id from _empirical)
+        union all select * from _ancestor
     """)
     return con.execute("select * from snomed_bridge").pl()
 
@@ -65,17 +94,15 @@ def icd9_era_patient_category(con, cfg: dict) -> tuple[pl.DataFrame, dict]:
             where co.condition_start_DATE < date '{c["era_start"]}' {death_clause}
         )
         select count(*) as n_rows, count(distinct person_id) as n_patients,
-               count(*) filter (where cid in (select snomed_id from snomed_bridge where levels = 0)) as rows_direct,
-               count(*) filter (where cid in (select snomed_id from snomed_bridge where levels > 0)) as rows_ancestor,
+               count(*) filter (where cid in (select snomed_id from snomed_bridge where source = 'empirical')) as rows_empirical,
+               count(*) filter (where cid in (select snomed_id from snomed_bridge where source = 'vocab')) as rows_vocab,
+               count(*) filter (where cid in (select snomed_id from snomed_bridge where source = 'ancestor')) as rows_ancestor,
                count(*) filter (where cid not in (select snomed_id from snomed_bridge)) as rows_unbridged,
                count(*) filter (where cid = 0) as rows_unmapped_concept
         from pre
     """).pl().row(0, named=True)
-    amb = con.execute("""
-        select count(*) filter (where n > 1) as ambiguous, count(*) as total
-        from (select snomed_id, count(distinct category) as n from snomed_bridge group by 1)
-    """).pl().row(0, named=True)
-    cov.update({"concepts_ambiguous": amb["ambiguous"], "concepts_total": amb["total"]})
+    pur = con.execute("select avg(purity) as mean_purity, count(*) as concepts from snomed_bridge where source = 'empirical'").pl().row(0, named=True)
+    cov.update({"empirical_concepts": pur["concepts"], "empirical_mean_purity": pur["mean_purity"]})
     pc = con.execute(f"""
         with era as (
             select co.person_id, b.category, co.condition_start_DATE as dt

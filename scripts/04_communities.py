@@ -37,14 +37,18 @@ def run(tag: str, g: nx.Graph, c: dict, with_null: bool = True) -> dict:
     lv = cm.louvain(g, c, seed=seed0)
     nodes = list(g.nodes)
     ari = adjusted_rand_score([lp[v] for v in nodes], [lv[v] for v in nodes])
-    print(f"leiden: {len(set(lp.values()))} communities, Q={cm.modularity(g, lp, c):.4f}   "
-          f"louvain: {len(set(lv.values()))} communities, Q={cm.modularity(g, lv, c):.4f}   ARI(leiden, louvain)={ari:.3f}")
+    print(f"leiden: {len(set(lp.values()))} communities, RB quality(gamma={res:g})={cm.modularity(g, lp, c):.4f}, standard Q={cm.modularity_standard(g, lp):.4f}   "
+          f"louvain: {len(set(lv.values()))} communities, RB quality={cm.modularity(g, lv, c):.4f}   ARI(leiden, louvain)={ari:.3f}")
+    with open(out / f"partition_quality{sfx}.txt", "w") as f:
+        f.write(f"resolution\t{res}\nleiden_rb_quality\t{cm.modularity(g, lp, c)}\nleiden_q_standard\t{cm.modularity_standard(g, lp)}\n"
+                f"louvain_rb_quality\t{cm.modularity(g, lv, c)}\nlouvain_q_standard\t{cm.modularity_standard(g, lv)}\nari_leiden_louvain\t{ari}\n"
+                f"n_leiden\t{len(set(lp.values()))}\nn_louvain\t{len(set(lv.values()))}\n")
     stab = cm.seed_stability(g, c)
     print("seed stability: " + ", ".join(f"s{r['seed']}: k={r['n_communities']} Q={r['q']:.4f} ARI={r['ari_vs_seed0']:.3f}" for r in stab.iter_rows(named=True)))
     if with_null:
         null = cm.modularity_vs_null(g, lp, c)
-        print(f"null ({null['n_null']} rewires): Q_null = {null['q_null_mean']:.4f} +/- {null['q_null_sd']:.4f} (max {null['q_null_max']:.4f}), "
-              f"k_null = {null['n_communities_null_mean']:.1f};  Q_obs = {null['q_observed']:.4f}, z = {null['z']:.1f}, p = {null['p_empirical']:.3f}")
+        print(f"null ({null['n_null']} rewires, RB quality at gamma={res:g}): null = {null['q_null_mean']:.4f} +/- {null['q_null_sd']:.4f} (max {null['q_null_max']:.4f}), "
+              f"k_null = {null['n_communities_null_mean']:.1f};  observed = {null['q_observed']:.4f}, z = {null['z']:.1f}, p = {null['p_empirical']:.3f}")
         pl.DataFrame({"q_null": null["q_null"]}).write_csv(out / f"modularity_null{sfx}.csv")
         with open(out / f"modularity{sfx}.txt", "w") as f:
             for k, v in null.items():

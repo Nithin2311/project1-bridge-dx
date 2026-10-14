@@ -58,10 +58,16 @@ def subgroup_members(labels: pl.DataFrame, cfg: dict) -> dict[str, list]:
     return out
 
 
-def compare_partitions(p_a: dict, p_b: dict) -> float:
-    """Adjusted Rand index over the shared nodes."""
-    common = [v for v in p_a if v in p_b]
+def compare_partitions(p_a: dict, p_b: dict, nodes: list | None = None) -> float:
+    """Adjusted Rand index over the shared nodes (or over `nodes` if given, e.g. non-isolates only)."""
+    common = [v for v in (nodes if nodes is not None else p_a) if v in p_a and v in p_b]
     return float(adjusted_rand_score([p_a[v] for v in common], [p_b[v] for v in common]))
+
+
+def in_ranges(category: str, ranges: list) -> bool:
+    """True if the 3-char category falls in any inclusive [lo, hi] range (string order works for ICD-10-CM
+    categories because letter, digit, digit/letter compare lexicographically)."""
+    return any(lo <= category <= hi for lo, hi in ranges)
 
 
 def connector_overlap(c_a: list, c_b: list, k: int = 20) -> float:

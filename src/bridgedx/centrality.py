@@ -67,7 +67,8 @@ def betweenness_null_percentile(g: nx.Graph, cfg: dict, observed: dict | None = 
             "bt_null_mean": float(col.mean()),
             "bt_null_sd": float(sd),
             "bt_null_percentile": float((col < obs[v]).mean()),
-            "bt_null_z": float((obs[v] - col.mean()) / sd) if sd > 0 else 0.0,
+            # z is meaningless when the null mass sits at ~0 (tiny observed values give z in the hundreds)
+            "bt_null_z": float((obs[v] - col.mean()) / sd) if sd > 0 and col.mean() >= 1e-4 else float("nan"),
         }
     return out
 
@@ -149,29 +150,89 @@ def target_clusters(partition: dict, anchors: dict[str, list[str]]) -> dict[str,
     return out
 
 
-def cluster_bridges(g: nx.Graph, clusters: dict[str, set]) -> pl.DataFrame:
+def _restricted_betweenness(g: nx.Graph, clusters: dict[str, set]) -> dict[str, dict]:
+    names = list(clusters)
+    out = {}
+    for i in range(len(names)):
+        for j in range(i + 1, len(names)):
+            a, b = names[i], names[j]
+            out[f"{a}-{b}"] = nx.betweenness_centrality_subset(
+                g, sources=list(clusters[a]), targets=list(clusters[b]), weight="distance", normalized=True)
+    return out
+
+
+def cluster_bridges(g: nx.Graph, clusters: dict[str, set], cfg: dict | None = None, n_null: int | None = None,
+                    seed: int = 0) -> pl.DataFrame:
     """For every pair of target clusters: betweenness restricted to shortest paths (distance 1/phi) from
-    cluster A nodes to cluster B nodes, for nodes outside both clusters; plus each node's phi-weight share
-    into A and into B (share of its weighted degree). One row per (pair, node)."""
+    cluster A nodes to cluster B nodes, for nodes outside both clusters; each node's phi-weight share into A
+    and into B; and, if n_null > 0 (default cfg centrality.bridge_null_n), the percentile and z of the
+    restricted betweenness against degree-preserving rewired graphs (weights shuffled). One row per (pair, node)."""
+    if n_null is None:
+        n_null = int(cfg["centrality"].get("bridge_null_n", 0)) if cfg else 0
+    pct_min = float(cfg["centrality"].get("bridge_null_percentile_min", 0.95)) if cfg else 0.95
     names = list(clusters)
     wdeg = dict(g.degree(weight="weight"))
+    obs = _restricted_betweenness(g, clusters)
+    nodes = list(g.nodes)
+    null = {pair: np.empty((n_null, len(nodes))) for pair in obs} if n_null else {}
+    if n_null:
+        for i, h in enumerate(null_models.rewired(g, n_null, seed=seed + 2000)):
+            r = _restricted_betweenness(h, clusters)
+            for pair in obs:
+                null[pair][i] = [r[pair][v] for v in nodes]
     rows = []
     for i in range(len(names)):
         for j in range(i + 1, len(names)):
             a, b = names[i], names[j]
             A, B = clusters[a], clusters[b]
-            bt = nx.betweenness_centrality_subset(g, sources=list(A), targets=list(B), weight="distance", normalized=True)
-            for v in g.nodes:
+            pair = f"{a}-{b}"
+            for idx, v in enumerate(nodes):
                 if v in A or v in B:
                     continue
                 w_a = sum(g[v][u]["weight"] for u in g.neighbors(v) if u in A)
                 w_b = sum(g[v][u]["weight"] for u in g.neighbors(v) if u in B)
-                rows.append({"pair": f"{a}-{b}", "category": v, "bridge_betweenness": bt[v],
-                             "w_to_a": w_a, "w_to_b": w_b,
-                             "share_to_a": w_a / wdeg[v] if wdeg[v] else 0.0,
-                             "share_to_b": w_b / wdeg[v] if wdeg[v] else 0.0,
-                             "min_share": min(w_a, w_b) / wdeg[v] if wdeg[v] else 0.0})
-    return pl.DataFrame(rows).sort("pair", "bridge_betweenness", descending=[False, True])
+                row = {"pair": pair, "category": v, "bridge_betweenness": obs[pair][v],
+                       "w_to_a": w_a, "w_to_b": w_b,
+                       "share_to_a": w_a / wdeg[v] if wdeg[v] else 0.0,
+                       "share_to_b": w_b / wdeg[v] if wdeg[v] else 0.0,
+                       "min_share": min(w_a, w_b) / wdeg[v] if wdeg[v] else 0.0}
+                if n_null:
+                    col = null[pair][:, idx]
+                    sd = col.std(ddof=1) if n_null > 1 else 0.0
+                    pct = float((col < obs[pair][v]).mean())
+                    row.update({"bridge_null_mean": float(col.mean()), "bridge_null_percentile": pct,
+                                "bridge_null_z": float((obs[pair][v] - col.mean()) / sd) if sd > 0 and col.mean() >= 1e-5 else float("nan"),
+                                "bridge_pass": bool(pct >= pct_min and obs[pair][v] > 0)})
+                rows.append(row)
+    df = pl.DataFrame(rows)
+    return df.sort("pair", "bridge_betweenness", descending=[False, True])
+
+
+def cluster_precedence(pc: pl.DataFrame, clusters: dict[str, set]) -> pl.DataFrame:
+    """Directed first-date precedence between target clusters (sequential analysis). For each ordered pair
+    (A, B) among patients who enter both: n_A_first, n_B_first, n_same_day, median gap days, two-sided
+    binomial sign test on A-first vs B-first."""
+    from scipy.stats import binomtest
+    entry = {}
+    for name, members in clusters.items():
+        e = (pc.filter(pl.col("category").is_in(list(members)))
+             .group_by("person_id").agg(pl.col("first_date").min().alias(name)))
+        entry[name] = e
+    names = list(clusters)
+    rows = []
+    for i in range(len(names)):
+        for j in range(i + 1, len(names)):
+            a, b = names[i], names[j]
+            d = entry[a].join(entry[b], on="person_id", how="inner")
+            gap = (d[b] - d[a]).dt.total_days()
+            n_a, n_b, n_same = int((gap > 0).sum()), int((gap < 0).sum()), int((gap == 0).sum())
+            p = binomtest(n_a, n_a + n_b, 0.5).pvalue if n_a + n_b else 1.0
+            rows.append({"from": a, "to": b, "n_both": d.height, "n_a_first": n_a, "n_b_first": n_b, "n_same_day": n_same,
+                         "share_a_first": n_a / (n_a + n_b) if n_a + n_b else float("nan"),
+                         "median_gap_days_a_to_b": float(gap.filter(gap > 0).median()) if n_a else float("nan"),
+                         "median_gap_days_b_to_a": float((-gap).filter(gap < 0).median()) if n_b else float("nan"),
+                         "p_sign_test": float(p)})
+    return pl.DataFrame(rows)
 
 
 def direct_cluster_edges(g: nx.Graph, clusters: dict[str, set]) -> pl.DataFrame:

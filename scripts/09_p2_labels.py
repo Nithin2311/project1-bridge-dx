@@ -21,10 +21,14 @@ out = config.outputs_dir(cfg)
 t0 = time.time()
 p2 = cfg["project2"]
 min_pos = int(p2["min_positives"])
-horizons = sorted({int(p2["horizon_months"]), 12})
+horizons = [int(h) for h in p2.get("horizons_months", [p2["horizon_months"], 12])]
 min_size = int(cfg["communities"].get("min_community_size_in_tables", 5))
 
 pc = pl.read_parquet(out / "patient_category.parquet")
+pre_path = out / "patient_category_icd9era.parquet"
+pc_pre = pl.read_parquet(pre_path) if pre_path.exists() else None  # bridged pre-era diagnoses (step 7), for prior-history exclusion
+if pc_pre is None:
+    print("WARNING: patient_category_icd9era.parquet missing (run 07); pre-2015 history NOT excluded")
 comm = pl.read_csv(out / "communities.csv")
 partition = dict(zip(comm["category"], comm["leiden"]))
 summary = pl.read_csv(out / "communities_summary.csv")
@@ -38,7 +42,9 @@ con.register("_pc", pc.to_arrow())
 pat = con.execute("""
     select p.person_id, p.first_dx, r.last_dx, d.death_DATE as death
     from (select person_id, min(first_date) as first_dx from _pc group by 1) p
-    join (select person_id, max(condition_start_DATE) as last_dx from condition_occurrence group by 1) r using (person_id)
+    join (select co.person_id, max(co.condition_start_DATE) as last_dx from condition_occurrence co
+          left join death d on d.person_id = co.person_id
+          where d.death_DATE is null or co.condition_start_DATE <= d.death_DATE group by 1) r using (person_id)
     left join death d using (person_id)
 """).pl()
 
@@ -53,7 +59,10 @@ for rule, base in rules.items():
         first_t = (pc.filter(pl.col("category").is_in(list(members)))
                    .group_by("person_id").agg(pl.col("first_date").min().alias("first_target")))
         df = base.join(first_t, on="person_id", how="left")
-        df = df.filter(pl.col("first_target").is_null() | (pl.col("first_target") > pl.col("index")))  # no prior target dx
+        df = df.filter(pl.col("first_target").is_null() | (pl.col("first_target") > pl.col("index")))  # no prior target dx in era
+        if pc_pre is not None:  # no prior target dx before the era either (bridged ICD-9 table)
+            prior = pc_pre.filter(pl.col("category").is_in(list(members)))["person_id"].unique()
+            df = df.filter(~pl.col("person_id").is_in(prior))
         for h in horizons:
             end = pl.col("index") + pl.duration(days=int(round(h * 30.44)))
             d = df.with_columns(
@@ -70,7 +79,8 @@ for rule, base in rules.items():
 res = pl.DataFrame(rows)
 res.write_csv(out / "p2_label_counts.csv")
 
-print(f"cohort {pat.height:,}; record end = last diagnosis date; min positives {min_pos}\n")
+print(f"cohort {pat.height:,}; record end = last diagnosis date (post-death rows ignored); prior history excluded from "
+      f"{'era + bridged pre-era' if pc_pre is not None else 'era only'}; min positives {min_pos}\n")
 for rule in rules:
     print(f"rule {rule}: {rules[rule].height:,} patients with an index date")
     for h in horizons:

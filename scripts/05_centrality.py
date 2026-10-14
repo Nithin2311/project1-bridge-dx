@@ -22,9 +22,6 @@ t0 = time.time()
 g = nx.read_graphml(out / "graph_main.graphml")
 comm = pl.read_csv(out / "communities.csv")
 partition = dict(zip(comm["category"], comm["leiden"]))
-summary = pl.read_csv(out / "communities_summary.csv")
-min_size = int(cfg["communities"].get("min_community_size_in_tables", 1))
-big = set(summary.filter(pl.col("size") >= min_size)["community"].to_list())
 
 print("betweenness + null ...", flush=True)
 bt = ce.betweenness_null_percentile(g, cfg)
@@ -69,20 +66,36 @@ print("\ntarget clusters (union of communities holding the anchor codes):")
 for k, members in clusters.items():
     cs = sorted({partition[v] for v in members})
     print(f"  {k:16s} communities {cs}  {len(members)} nodes: " + ", ".join(sorted(members)[:12]) + (" ..." if len(members) > 12 else ""))
-br = ce.cluster_bridges(g, clusters)
+print(f"cluster-restricted betweenness + {cfg['centrality'].get('bridge_null_n', 0)} rewired nulls ...", flush=True)
+br = ce.cluster_bridges(g, clusters, cfg, seed=int(cfg["communities"]["seeds"][0]))
 br = br.join(meta, on="category").join(df.select("category", "community", "degree", "prevalence", "bt_null_z"), on="category")
 br.write_csv(out / "bridges.csv")
+pct_min = float(cfg["centrality"].get("bridge_null_percentile_min", 0.95))
 de = ce.direct_cluster_edges(g, clusters)
 de.write_csv(out / "bridges_direct_edges.csv")
 k = int(cfg["centrality"].get("bridge_top_k", 15))
 for pair in br["pair"].unique().sort():
     sub = br.filter(pl.col("pair") == pair)
     a, b = pair.split("-")
-    print(f"\n{pair}: direct edges between the clusters = {de.filter(pl.col('pair') == pair).height}; top {k} bridge nodes by restricted betweenness:")
+    n_pass = int(sub["bridge_pass"].sum()) if "bridge_pass" in sub.columns else -1
+    print(f"\n{pair}: direct edges between the clusters = {de.filter(pl.col('pair') == pair).height}; "
+          f"{n_pass} nodes pass the null (pct >= {pct_min}); top {k} by restricted betweenness (* = pass):")
     for r in sub.head(k).iter_rows(named=True):
-        print(f"  {r['category']:4s} {str(r['name'])[:36]:36s} c{r['community']:<2} bt_AB={r['bridge_betweenness']:.4f}  "
-              f"share->{a[:5]}={r['share_to_a']:.2f} share->{b[:5]}={r['share_to_b']:.2f}  deg={r['degree']:3d} prev={r['prevalence']:.2f}")
+        mark = "*" if r.get("bridge_pass") else " "
+        print(f" {mark}{r['category']:4s} {str(r['name'])[:36]:36s} c{r['community']:<2} bt_AB={r['bridge_betweenness']:.4f} "
+              f"pct={r.get('bridge_null_percentile', float('nan')):.2f} share->{a[:5]}={r['share_to_a']:.2f} share->{b[:5]}={r['share_to_b']:.2f}  deg={r['degree']:3d} prev={r['prevalence']:.2f}")
     top_direct = de.filter(pl.col("pair") == pair).head(5)
     if top_direct.height:
         print("  strongest direct edges: " + "; ".join(f"{r['u']}-{r['v']} phi={r['phi']:.2f}" for r in top_direct.iter_rows(named=True)))
 print(f"wrote {out/'bridges.csv'}, {out/'bridges_direct_edges.csv'}")
+
+# --- directed precedence between target clusters (sequential analysis) ---
+if cfg["centrality"].get("precedence", True):
+    pc = pl.read_parquet(out / "patient_category.parquet")
+    prec = ce.cluster_precedence(pc, clusters)
+    prec.write_csv(out / "cluster_precedence.csv")
+    print("\nfirst-diagnosis precedence between target clusters (patients entering both):")
+    for r in prec.iter_rows(named=True):
+        print(f"  {r['from']} -> {r['to']}: n_both={r['n_both']:,}  {r['from'][:6]} first {r['n_a_first']:,} ({r['share_a_first']:.0%}), "
+              f"{r['to'][:6]} first {r['n_b_first']:,}, same day {r['n_same_day']:,}; median gap {r['median_gap_days_a_to_b']:.0f} / {r['median_gap_days_b_to_a']:.0f} d; sign-test p={r['p_sign_test']:.2g}")
+    print(f"wrote {out/'cluster_precedence.csv'}")

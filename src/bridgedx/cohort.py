@@ -143,6 +143,11 @@ def cohort_funnel(con, cfg: dict) -> pl.DataFrame:
     union all select 'distinct (patient, category) pairs',        count(distinct person_id), count(*) from (
                   select distinct person_id, category from base
                   where dt >= date '{c["era_start"]}' and category is not null and (death_DATE is null or dt <= death_DATE))
+    union all select 'patients with >= {int(c["min_distinct_categories"])} distinct categories (cohort)', count(*), sum(n) from (
+                  select person_id, count(*) as n from (
+                      select distinct person_id, category from base
+                      where dt >= date '{c["era_start"]}' and category is not null and (death_DATE is null or dt <= death_DATE))
+                  group by 1 having count(*) >= {int(c["min_distinct_categories"])})
     """
     return con.execute(sql).pl()
 

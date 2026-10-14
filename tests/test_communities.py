@@ -52,3 +52,12 @@ def test_modularity_vs_null_and_stability():
     assert r["n_null"] == 3 and len(r["q_null"]) == 3 and r["q_observed"] >= r["q_null_max"]
     s = cm.seed_stability(g, CFG)
     assert s.height == 2 and s["ari_vs_seed0"].to_list() == [1.0, 1.0]
+
+
+def test_modularity_resolution_and_standard():
+    g = _two_cliques()
+    p = cm.leiden(g, CFG, seed=0)
+    q1 = cm.modularity_standard(g, p)
+    q2 = cm.modularity(g, p, resolution=2.0)
+    assert q1 > q2  # higher gamma penalises the null term more
+    assert cm.modularity(g, p, {"communities": {"resolution": 1.0}}) == q1

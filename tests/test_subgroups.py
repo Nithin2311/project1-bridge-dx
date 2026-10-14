@@ -55,3 +55,47 @@ def test_edgewise_permutation_detects_group_specific_edge():
     assert ab["phi_a"] > 0.95 and ab["p_perm"] < 0.01 and ab["diff"] > 0.8
     assert ac["p_perm"] > 0.05
     assert res["n_a"][0] == 200 and res["n_b"][0] == 200
+
+
+def test_bh_fdr_matches_statsmodels_style_reference():
+    import numpy as np
+    # reuse the permutation machinery on random data and check the BH transform against a direct implementation
+    rng = np.random.default_rng(3)
+    rows, labs = [], []
+    for p in range(120):
+        labs.append((p, "female" if p % 2 else "male"))
+        for c in "ABCDE":
+            if rng.random() < 0.4:
+                rows.append((p, c))
+    pc = pl.DataFrame(rows, schema=["person_id", "category"], orient="row")
+    labels = pl.DataFrame(labs, schema=["person_id", "sex"], orient="row")
+    edges = pl.DataFrame({"u": ["A", "A", "A", "B", "B", "C"], "v": ["B", "C", "D", "C", "E", "E"]})
+    res = sg.edgewise_permutation(pc, labels, CFG, edges, "sex", "female", "male", list("ABCDE"), seed=0)
+    p = res["p_perm"].to_numpy()
+    m = len(p)
+    order = np.argsort(p)
+    q_ref = np.empty(m)
+    prev = 1.0
+    for rank in range(m, 0, -1):
+        i = order[rank - 1]
+        prev = min(prev, p[i] * m / rank)
+        q_ref[i] = prev
+    assert np.allclose(res["p_fdr"].to_numpy(), q_ref)
+
+
+def test_in_ranges():
+    r = [["N40", "N51"], ["O00", "O9A"], ["C50", "C58"]]
+    assert sg.in_ranges("N40", r) and sg.in_ranges("N45", r) and sg.in_ranges("O99", r) and sg.in_ranges("O9A", r) and sg.in_ranges("C50", r)
+    assert not sg.in_ranges("N39", r) and not sg.in_ranges("N52", r) and not sg.in_ranges("I10", r) and not sg.in_ranges("C59", r)
+
+
+def test_age_rule_feb29_and_unknown_gender():
+    import datetime as dt
+    import duckdb
+    con = duckdb.connect()
+    con.execute("create table person(person_id bigint, gender_concept_id bigint, birth_DATETIME timestamp)")
+    con.execute("insert into person values (1, 8532, '1952-02-29'), (2, 0, '1960-01-01')")
+    pc = pl.DataFrame({"person_id": [1, 2], "category": ["A", "A"], "first_date": [dt.date(2017, 2, 28), dt.date(2017, 1, 1)]})
+    df = sg.assign_subgroups(con, CFG, pc).sort("person_id")
+    assert df["age_at_index"].to_list() == [64, 57]  # Feb 28 2017 is the day before the leap-birthday's Mar 1 anniversary
+    assert df["sex"].to_list() == ["female", None]    # unknown gender concept -> null sex, patient kept for age bands

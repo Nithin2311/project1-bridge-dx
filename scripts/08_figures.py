@@ -46,8 +46,10 @@ viz.community_layout(g, partition, out / "fig_communities.pdf", top_k=int(cfg["f
                      comm_names=comm_names, seed=cfg["communities"]["seeds"][0], priority=priority)
 viz.prevalence_residual_plot(cent, out / "fig_prevalence_residual.pdf")
 q_null = pl.read_csv(out / "modularity_null.csv")["q_null"].to_numpy()
-q_obs = float(dict(l.strip().split("\t") for l in open(out / "modularity.txt"))["q_observed"])
-viz.modularity_null_plot(q_null, q_obs, out / "fig_modularity_null.pdf")
+mod = dict(l.strip().split("\t") for l in open(out / "modularity.txt"))
+viz.modularity_null_plot(q_null, float(mod["q_observed"]), out / "fig_modularity_null.pdf",
+                         resolution=float(mod.get("resolution", cfg["communities"]["resolution"])),
+                         q_standard=float(mod["q_standard_observed"]) if "q_standard_observed" in mod else None)
 for pair in sub_bridges["pair"].unique().sort():
     viz.subgroup_bridges_plot(sub_bridges, out / f"fig_bridges_{pair}.pdf", pair, groups, names)
 for tag, a, b in [("sex", "female", "male"), ("age", "under65", "over65")]:
@@ -71,34 +73,51 @@ viz.latex_table(top_bt, tbl / "betweenness.tex", "Top 15 categories by phi-weigh
                 "tab:betweenness", {"betweenness": "{:.4f}", "null pct": "{:.2f}", "null z": "{:.1f}", "P": "{:.2f}", "z_in": "{:.2f}", "prevalence": "{:.2f}", "resid z": "{:.2f}"})
 
 rows = []
+pct_min = float(cfg["centrality"].get("bridge_null_percentile_min", 0.95))
 for pair in bridges["pair"].unique().sort():
-    s = bridges.filter(pl.col("pair") == pair).head(8)
-    for r in s.iter_rows(named=True):
+    s = bridges.filter(pl.col("pair") == pair)
+    if "bridge_pass" in s.columns:
+        s = s.filter(pl.col("bridge_pass"))
+    for r in s.head(8).iter_rows(named=True):
         rows.append({"pair": pair.replace("_", " "), "category": r["category"], "name": str(r["name"])[:34],
-                     "bt(A,B)": r["bridge_betweenness"], "share A": r["share_to_a"], "share B": r["share_to_b"], "degree": r["degree"]})
-viz.latex_table(pl.DataFrame(rows), tbl / "bridges.tex", "Top 8 bridge categories per cluster pair: betweenness restricted to shortest paths between the two clusters, and the share of the node's phi-weight that lands in each cluster.",
-                "tab:bridges", {"bt(A,B)": "{:.4f}", "share A": "{:.2f}", "share B": "{:.2f}"})
+                     "bt(A,B)": r["bridge_betweenness"], "null pct": r.get("bridge_null_percentile"),
+                     "share A": r["share_to_a"], "share B": r["share_to_b"], "degree": r["degree"]})
+viz.latex_table(pl.DataFrame(rows), tbl / "bridges.tex",
+                f"Bridge categories per cluster pair that beat the rewired null (percentile $\\geq$ {pct_min}): betweenness restricted to shortest paths between the two clusters, null percentile, and the share of the node's phi-weight landing in each cluster.",
+                "tab:bridges", {"bt(A,B)": "{:.4f}", "null pct": "{:.2f}", "share A": "{:.2f}", "share B": "{:.2f}"})
+prec_path = out / "cluster_precedence.csv"
+if prec_path.exists():
+    prec = pl.read_csv(prec_path)
+    viz.latex_table(prec.select(pl.col("from").alias("cluster A"), pl.col("to").alias("cluster B"), pl.col("n_both").alias("patients in both"),
+                                pl.col("n_a_first").alias("A first"), pl.col("n_b_first").alias("B first"), pl.col("n_same_day").alias("same day"),
+                                pl.col("median_gap_days_a_to_b").alias("median days A$\\to$B"), pl.col("p_sign_test").alias("sign-test p")),
+                    tbl / "precedence.tex", "Order of first diagnosis between target clusters among patients who enter both (directed, sequential view).",
+                    "tab:precedence", {"median days A$\\to$B": "{:.0f}", "sign-test p": "{:.2g}"}, escape=False)
 
 sc = pl.read_csv(out / "subgroup_comparison.csv")
 viz.latex_table(sc.select("subgroup", pl.col("n_patients").alias("patients"), pl.col("n_edges").alias("edges"), "density",
-                          pl.col("avg_clustering").alias("clustering"), pl.col("n_communities").alias("communities"), pl.col("q").alias("Q"),
-                          pl.col("ari_vs_main").alias("ARI vs main"), pl.col(f"top{k_top}_bt_overlap_vs_main").alias(f"top-{k_top} overlap")),
-                tbl / "subgroups.tex", "Subgroup graphs on the main node set, compared with the pooled graph.",
-                "tab:subgroups", {"density": "{:.3f}", "clustering": "{:.2f}", "Q": "{:.3f}", "ARI vs main": "{:.2f}", f"top-{k_top} overlap": "{:.2f}"})
+                          pl.col("n_isolates").alias("isolates"), pl.col("n_communities_ge5").alias("communities ($\\geq$5)"), pl.col("q_standard").alias("Q"),
+                          pl.col("ari_vs_main").alias("ARI vs main"), pl.col("ari_vs_main_non_isolates").alias("ARI (non-isolates)"),
+                          pl.col(f"top{k_top}_bt_overlap_vs_main").alias(f"top-{k_top} overlap")),
+                tbl / "subgroups.tex", "Subgroup graphs on the main node set, compared with the pooled graph. Smaller subgroups keep fewer edges at the fixed thresholds, so ARI is also given over non-isolated nodes.",
+                "tab:subgroups", {"density": "{:.3f}", "Q": "{:.3f}", "ARI vs main": "{:.2f}", "ARI (non-isolates)": "{:.2f}", f"top-{k_top} overlap": "{:.2f}"})
 pw = pl.read_csv(out / "subgroup_pairwise.csv")
-viz.latex_table(pw.select("comparison", pl.col("ari").alias("ARI"), pl.col(f"top{k_top}_bt_overlap").alias(f"top-{k_top} overlap"),
+viz.latex_table(pw.select("comparison", pl.col("ari").alias("ARI"), pl.col("ari_non_isolates").alias("ARI (non-isolates)"), pl.col(f"top{k_top}_bt_overlap").alias(f"top-{k_top} overlap"),
                           pl.col("edges_only_a").alias("edges only A"), pl.col("edges_only_b").alias("edges only B"), pl.col("edges_both").alias("shared"),
                           pl.col("jaccard_edges").alias("edge Jaccard")),
                 tbl / "subgroup_pairwise.tex", "Pairwise subgroup comparison.", "tab:pairwise",
-                {"ARI": "{:.2f}", f"top-{k_top} overlap": "{:.2f}", "edge Jaccard": "{:.2f}"})
+                {"ARI": "{:.2f}", "ARI (non-isolates)": "{:.2f}", f"top-{k_top} overlap": "{:.2f}", "edge Jaccard": "{:.2f}"})
 sens = pl.read_csv(out / "sensitivity_summary.csv")
-viz.latex_table(sens.select("variant", pl.col("n_patients").alias("patients"), pl.col("n_edges").alias("edges"), pl.col("n_communities").alias("communities"),
-                            pl.col("ari_vs_main").alias("ARI vs main"), pl.col(f"top{k_top}_bt_overlap_vs_main").alias(f"top-{k_top} overlap"),
-                            pl.col("edge_jaccard_vs_main").alias("edge Jaccard")),
+viz.latex_table(sens.select("variant", pl.col("n_patients").alias("patients"), pl.col("n_edges").alias("edges"), pl.col("n_isolates").alias("isolates"),
+                            pl.col("n_communities").alias("communities"),
+                            pl.col("ari_vs_main").alias("ARI vs main"), pl.col("ari_vs_main_non_isolates").alias("ARI (non-isol.)"),
+                            pl.col(f"top{k_top}_bt_overlap_vs_main").alias(f"top-{k_top} overlap"), pl.col("edge_jaccard_vs_main").alias("edge Jaccard")),
                 tbl / "sensitivity.tex", "Sensitivity runs compared with the main graph and partition.", "tab:sensitivity",
-                {"ARI vs main": "{:.2f}", f"top-{k_top} overlap": "{:.2f}", "edge Jaccard": "{:.2f}"})
+                {"ARI vs main": "{:.2f}", "ARI (non-isol.)": "{:.2f}", f"top-{k_top} overlap": "{:.2f}", "edge Jaccard": "{:.2f}"})
 stats = pl.read_csv(out / "graph_stats.csv").filter(pl.col("graph") == "main").select("stat", "value")
-viz.latex_table(stats, tbl / "graph_stats.tex", "Main graph statistics.", "tab:stats", {"value": "{:.3f}"})
+stats = stats.with_columns(pl.when(pl.col("value") == pl.col("value").round(0)).then(pl.col("value").cast(pl.Int64).cast(pl.Utf8))
+                           .otherwise(pl.col("value").round(3).cast(pl.Utf8)).alias("value"))
+viz.latex_table(stats, tbl / "graph_stats.tex", "Main graph statistics.", "tab:stats")
 
 print("figures:", ", ".join(p.name for p in sorted(out.glob("fig_*.pdf"))))
 print("tables: ", ", ".join(p.name for p in sorted(tbl.glob("*.tex"))))
