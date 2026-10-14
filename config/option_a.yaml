@@ -43,13 +43,28 @@ subgroups:
   same_node_set: true
   groups:
     sex: [female, male]
-    age: {cut: 65, labels: [under65, over65]}   # age at index (define: age at first ICD-10-era dx)
+    age: {cut: 65, labels: [under65, over65]}
+  # Age rule (decided 2026-10-14, both teammates run this):
+  #   index_date = earliest condition_start_DATE in the ICD-10 era for that patient (min of first_date in
+  #                outputs/patient_category.parquet, i.e. after the post-death drop and the >=5-category filter)
+  #   age_at_index = floor(years between person.birth_DATETIME and index_date)   (full birth dates in person.csv, no nulls)
+  #   over65 if age_at_index >= 65 else under65   (65 counts as over65)
+  #   sex from person.gender_concept_id: 8532 = female, 8507 = male (no other values in the data)
+  age_rule:
+    index_date: first_icd10_era_dx
+    birth_field: birth_DATETIME
+    sex_concept_ids: {female: 8532, male: 8507}
   comparison:
     partition: adjusted_rand_index
     connectors: top_k_overlap
     top_k: 20
     edge_test: permutation
     n_permutations: 1000
+
+figures:
+  # decided 2026-10-14: every measure runs on the full kept-edge graph (density 0.13); plots only are sparsified
+  sparsify: top_k_per_node      # keep each node's k strongest phi edges for the layout, nothing else
+  top_k: 5
 
 sensitivity:
   - drop_chapters_RZ
