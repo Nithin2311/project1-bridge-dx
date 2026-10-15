@@ -32,7 +32,7 @@ td = pl.read_csv(out / "target_definitions.csv")
 cores = {k: set(td.filter((pl.col("target") == k) & pl.col("in_core"))["category"].to_list()) for k in anchors}
 br0 = pl.read_csv(out / "bridges.csv")
 patients = np.array(sorted(pc["person_id"].unique().to_list()))
-pc_by = {pid: grp for pid, grp in pc.group_by("person_id")}
+pc_by = {(k[0] if isinstance(k, tuple) else k): grp for k, grp in pc.group_by("person_id")}
 
 edge_count, member_count, bridge_rank = {}, {k: {} for k in anchors}, {}
 for b in range(B):

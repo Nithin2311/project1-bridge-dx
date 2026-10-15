@@ -126,7 +126,7 @@ subgroups:
     connectors: top_k_overlap
     top_k: 20
     edge_test: permutation
-    n_permutations: 5000   # was 1000 (proposal); raised 2026-10-14: with 13,421 edges the 1/1001 p floor cannot pass BH-FDR 0.05
+    n_permutations: 20000  # was 1000 (proposal); raised to 5,000 on 2026-10-14 and 20,000 on 2026-10-15: BH-FDR over ~9-13k edges needs a p floor of ~5e-5
 
 figures:
   # decided 2026-10-14: every measure runs on the full kept-edge graph (density 0.13); plots only are sparsified

@@ -69,15 +69,27 @@ feat = feat.join(ip, on="category", how="left").with_columns((pl.col("inpatient_
 # chronic: HCUP CCIR share of a 3-char category's codes flagged chronic (1), excluding 'no determination' (9)
 ccir_path = config.REPO_ROOT / pt["ccir_file"]
 if ccir_path.exists():
-    cc = pl.read_csv(ccir_path, skip_rows=2, quote_char="'", has_header=True, new_columns=["code", "description", "chronic"], infer_schema_length=0)
-    cc = cc.with_columns(pl.col("code").str.strip_chars("'\" ").str.slice(0, 3).alias("category"), pl.col("chronic").str.strip_chars("'\" ").cast(pl.Int64))
+    import csv
+    recs = []
+    with open(ccir_path, newline="", encoding="utf-8-sig") as fh:
+        for row in csv.reader(fh):
+            if len(row) < 3 or not row[0].strip("'\" ").isalnum() or row[0].strip("'\" ") in ("ICD-10-CM CODE",):
+                continue
+            code = row[0].strip("'\" ")
+            try:
+                chronic = int(row[-1].strip("'\" "))
+            except ValueError:
+                continue
+            recs.append((code[:3], chronic))
+    cc = pl.DataFrame(recs, schema=["category", "chronic"], orient="row")
     cc = cc.filter(pl.col("chronic") != 9).group_by("category").agg(pl.col("chronic").mean().alias("ccir_chronic_share"), pl.len().alias("ccir_n_codes"))
+    print(f"CCIR: {len(recs):,} codes -> {cc.height} categories")
     feat = feat.join(cc, on="category", how="left").with_columns((pl.col("ccir_chronic_share") >= 0.5).alias("ccir_chronic"))
 else:
     print(f"WARNING: CCIR file not found at {ccir_path}; chronic flag skipped")
 
 # demographics: mean age at first occurrence and female share among main patients with the code
-lab = pl.read_csv(out / "subgroup_labels.csv").select("person_id", "sex", "age_at_index", "index_date")
+lab = pl.read_csv(out / "subgroup_labels.csv", try_parse_dates=True).select("person_id", "sex", "age_at_index", "index_date")
 pc = pl.read_parquet(out / "patient_category.parquet").filter(pl.col("person_id").is_in(main_ids) & pl.col("category").is_in(nodes))
 pc = pc.join(lab, on="person_id").with_columns(
     (pl.col("age_at_index") + (pl.col("first_date") - pl.col("index_date")).dt.total_days() / 365.25).alias("age_at_code"))
@@ -98,7 +110,7 @@ era = con.execute(f"""
   where co.condition_start_DATE >= date '{cfg["cohort"]["era_start"]}' and (d.death_DATE is null or co.condition_start_DATE <= d.death_DATE)
     and m.category in (select category from _nodes)
   group by 1, 2""").pl()
-by_pat = {pid: (grp["category"].to_list(), np.array(grp["dt"].to_list())) for pid, grp in era.group_by("person_id")}
+by_pat = {(k[0] if isinstance(k, tuple) else k): (grp["category"].to_list(), np.array(grp["dt"].to_list())) for k, grp in era.group_by("person_id")}
 # NB: uses FIRST occurrence per category in the era; a code first seen before the window counts as present (chronic history)
 lookbacks = [int(x) for x in pt["lookback_days"]]
 rows = []
