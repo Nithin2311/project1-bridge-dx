@@ -57,12 +57,16 @@ def build_snomed_bridge(con, cfg: dict | None = None, min_era_rows: int = 5, max
             where r.relationship_id = 'Maps to' and c.vocabulary_id = 'ICD10CM' {allow}
         ) group by snomed_id having count(*) = 1
     """)
+    # ancestor fallback only for concepts with NO ICD-10-CM vocabulary map at all (a concept whose own map was
+    # multi-category or disallowed must not be re-mapped through a parent: second review N3)
     con.execute("""
         create or replace temp table _need as
         select distinct condition_concept_id as snomed_id from condition_occurrence
         where condition_concept_id <> 0
           and condition_concept_id not in (select snomed_id from _empirical)
-          and condition_concept_id not in (select snomed_id from _vocab)
+          and condition_concept_id not in (
+              select distinct r.concept_id_2 from concept_relationship r join concept c on c.concept_id = r.concept_id_1
+              where r.relationship_id = 'Maps to' and c.vocabulary_id = 'ICD10CM')
     """)
     con.execute(f"""
         create or replace temp table _ancestor as
@@ -106,9 +110,9 @@ def icd9_era_patient_category(con, cfg: dict) -> tuple[pl.DataFrame, dict]:
         )
         select count(*) as n_rows, count(distinct person_id) as n_patients,
                count(*) filter (where upper(trim(sv)) in (select sv from _manual)) as rows_manual,
-               count(*) filter (where cid in (select snomed_id from snomed_bridge where source = 'empirical')) as rows_empirical,
-               count(*) filter (where cid in (select snomed_id from snomed_bridge where source = 'vocab')) as rows_vocab,
-               count(*) filter (where cid in (select snomed_id from snomed_bridge where source = 'ancestor')) as rows_ancestor,
+               count(*) filter (where upper(trim(sv)) not in (select sv from _manual) and cid in (select snomed_id from snomed_bridge where source = 'empirical')) as rows_empirical,
+               count(*) filter (where upper(trim(sv)) not in (select sv from _manual) and cid in (select snomed_id from snomed_bridge where source = 'vocab')) as rows_vocab,
+               count(*) filter (where upper(trim(sv)) not in (select sv from _manual) and cid in (select snomed_id from snomed_bridge where source = 'ancestor')) as rows_ancestor,
                count(*) filter (where cid not in (select snomed_id from snomed_bridge) and upper(trim(sv)) not in (select sv from _manual)) as rows_unbridged,
                count(*) filter (where cid = 0) as rows_unmapped_concept
         from pre

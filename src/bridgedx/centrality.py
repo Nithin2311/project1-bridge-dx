@@ -170,6 +170,8 @@ def cluster_bridges(g: nx.Graph, clusters: dict[str, set], cfg: dict | None = No
     if n_null is None:
         n_null = int(cfg["centrality"].get("bridge_null_n", 0)) if cfg else 0
     pct_min = float(cfg["centrality"].get("bridge_null_percentile_min", 0.95)) if cfg else 0.95
+    min_z = float(cfg["centrality"].get("bridge_min_z", 2.0)) if cfg else 2.0
+    min_share = float(cfg["centrality"].get("bridge_min_share_of_max", 0.10)) if cfg else 0.10
     names = list(clusters)
     wdeg = dict(g.degree(weight="weight"))
     obs = _restricted_betweenness(g, clusters)
@@ -186,6 +188,7 @@ def cluster_bridges(g: nx.Graph, clusters: dict[str, set], cfg: dict | None = No
             a, b = names[i], names[j]
             A, B = clusters[a], clusters[b]
             pair = f"{a}-{b}"
+            pair_max = max((obs[pair][v] for v in nodes if v not in A and v not in B), default=0.0)
             for idx, v in enumerate(nodes):
                 if v in A or v in B:
                     continue
@@ -200,9 +203,12 @@ def cluster_bridges(g: nx.Graph, clusters: dict[str, set], cfg: dict | None = No
                     col = null[pair][:, idx]
                     sd = col.std(ddof=1) if n_null > 1 else 0.0
                     pct = float((col < obs[pair][v]).mean())
-                    row.update({"bridge_null_mean": float(col.mean()), "bridge_null_percentile": pct,
-                                "bridge_null_z": float((obs[pair][v] - col.mean()) / sd) if sd > 0 and col.mean() >= 1e-5 else float("nan"),
-                                "bridge_pass": bool(pct >= pct_min and obs[pair][v] > 0)})
+                    z = float((obs[pair][v] - col.mean()) / sd) if sd > 0 and col.mean() >= 1e-5 else float("nan")
+                    o = obs[pair][v]
+                    magnitude_ok = (z == z and z >= min_z) or (pair_max > 0 and o >= min_share * pair_max)
+                    row.update({"bridge_null_mean": float(col.mean()), "bridge_null_percentile": pct, "bridge_null_z": z,
+                                "bridge_share_of_pair_max": o / pair_max if pair_max > 0 else 0.0,
+                                "bridge_pass": bool(pct >= pct_min and o > 0 and magnitude_ok)})
                 rows.append(row)
     df = pl.DataFrame(rows)
     return df.sort("pair", "bridge_betweenness", descending=[False, True])

@@ -52,8 +52,12 @@ viz.modularity_null_plot(q_null, float(mod["q_observed"]), out / "fig_modularity
                          q_standard=float(mod["q_standard_observed"]) if "q_standard_observed" in mod else None)
 for pair in sub_bridges["pair"].unique().sort():
     viz.subgroup_bridges_plot(sub_bridges, out / f"fig_bridges_{pair}.pdf", pair, groups, names)
+from bridgedx import subgroups as sg
+ranges = cfg["nodes"].get("sex_specific_ranges", [])
 for tag, a, b in [("sex", "female", "male"), ("age", "under65", "over65")]:
     pt = pl.read_csv(out / f"subgroup_edge_permutation_{tag}.csv")
+    pt = pt.with_columns((pl.col("u").map_elements(lambda c: sg.in_ranges(c, ranges), return_dtype=pl.Boolean)
+                          | pl.col("v").map_elements(lambda c: sg.in_ranges(c, ranges), return_dtype=pl.Boolean)).alias("sex_specific"))
     viz.edge_diff_plot(pt, out / f"fig_edge_diff_{tag}.pdf", a, b, alpha)
 
 # tables
@@ -88,11 +92,12 @@ viz.latex_table(pl.DataFrame(rows), tbl / "bridges.tex",
 prec_path = out / "cluster_precedence.csv"
 if prec_path.exists():
     prec = pl.read_csv(prec_path)
-    viz.latex_table(prec.select(pl.col("from").alias("cluster A"), pl.col("to").alias("cluster B"), pl.col("n_both").alias("patients in both"),
+    viz.latex_table(prec.select(pl.col("from").str.replace_all("_", " ").alias("cluster A"), pl.col("to").str.replace_all("_", " ").alias("cluster B"),
+                                pl.col("n_both").alias("patients in both"),
                                 pl.col("n_a_first").alias("A first"), pl.col("n_b_first").alias("B first"), pl.col("n_same_day").alias("same day"),
-                                pl.col("median_gap_days_a_to_b").alias("median days A$\\to$B"), pl.col("p_sign_test").alias("sign-test p")),
-                    tbl / "precedence.tex", "Order of first diagnosis between target clusters among patients who enter both (directed, sequential view).",
-                    "tab:precedence", {"median days A$\\to$B": "{:.0f}", "sign-test p": "{:.2g}"}, escape=False)
+                                pl.col("median_gap_days_a_to_b").alias("median days A to B"), pl.col("p_sign_test").alias("sign-test p")),
+                    tbl / "precedence.tex", "Order of first recorded diagnosis between target clusters among patients who enter both (directed, sequential view).",
+                    "tab:precedence", {"median days A to B": "{:.0f}", "sign-test p": "{:.2g}"})
 
 sc = pl.read_csv(out / "subgroup_comparison.csv")
 viz.latex_table(sc.select("subgroup", pl.col("n_patients").alias("patients"), pl.col("n_edges").alias("edges"), "density",

@@ -39,7 +39,13 @@ set of connectors change between patients under 65 and over 65, or between women
 
 ## Traps → handling
 Prevalence hubs → phi + tests + residual plot · Duplicates → distinct (patient, category) · Post-death events → drop ·
-ICD-9/10 switch → ICD-10 primary, ICD-9 appendix · R/Z chapters → keep, flag, rerun without · Unequal follow-up → stratified sensitivity.
+ICD-9/10 switch → ICD-10 primary, ICD-9 appendix (empirical SNOMED map) · R/Z/O chapters → excluded from the main graph, full graph as sensitivity (decided 2026-10-14) · Unequal follow-up → stratified sensitivity (power-limited).
+
+## Decisions after the proposal (2026-10-14, two independent reviews; reasons in config/option_a.yaml)
+Main graph excludes R, Z, O chapters (483 nodes). Leiden resolution 1.5 (1.0, 2.0 sensitivity); RB quality and
+standard Q both reported. Bridges = cluster-restricted betweenness that beats a 100-rewire null with a magnitude
+floor. Directed first-recording precedence between target clusters. 5,000 permutations. Sex-specific codes flagged.
+Mental-health module is seed-sensitive (15/44/23 nodes): report the seed table.
 
 ## Related works already named
 Monchka 2022, Qiu 2021, Guimerà & Amaral 2005, Traag 2019, Hidalgo 2009. Need ≥5; have 5, add 2–3 from `../FinalProject/research/`.

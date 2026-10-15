@@ -64,10 +64,19 @@ def compare_partitions(p_a: dict, p_b: dict, nodes: list | None = None) -> float
     return float(adjusted_rand_score([p_a[v] for v in common], [p_b[v] for v in common]))
 
 
+def _cat_key(c: str) -> tuple:
+    """Sort key for 3-char ICD-10-CM categories: letter, digit, then digit (0-9) or letter (10+), so O9A > O99
+    and Z3A > Z39. A range upper bound like 'Z3Z' covers the whole Z3x block."""
+    c = c.upper()
+    third = c[2] if len(c) > 2 else "0"
+    rank = int(third) if third.isdigit() else 10 + ord(third) - ord("A")
+    return (c[0], int(c[1]) if c[1].isdigit() else 0, rank)
+
+
 def in_ranges(category: str, ranges: list) -> bool:
-    """True if the 3-char category falls in any inclusive [lo, hi] range (string order works for ICD-10-CM
-    categories because letter, digit, digit/letter compare lexicographically)."""
-    return any(lo <= category <= hi for lo, hi in ranges)
+    """True if the 3-char category falls in any inclusive [lo, hi] range (see _cat_key)."""
+    k = _cat_key(category)
+    return any(_cat_key(lo) <= k <= _cat_key(hi) for lo, hi in ranges)
 
 
 def connector_overlap(c_a: list, c_b: list, k: int = 20) -> float:

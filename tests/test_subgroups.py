@@ -84,9 +84,11 @@ def test_bh_fdr_matches_statsmodels_style_reference():
 
 
 def test_in_ranges():
-    r = [["N40", "N51"], ["O00", "O9A"], ["C50", "C58"]]
+    r = [["N40", "N51"], ["O00", "O9Z"], ["C50", "C58"], ["Z30", "Z3Z"]]
     assert sg.in_ranges("N40", r) and sg.in_ranges("N45", r) and sg.in_ranges("O99", r) and sg.in_ranges("O9A", r) and sg.in_ranges("C50", r)
+    assert sg.in_ranges("Z3A", r) and sg.in_ranges("Z37", r) and sg.in_ranges("Z30", r)
     assert not sg.in_ranges("N39", r) and not sg.in_ranges("N52", r) and not sg.in_ranges("I10", r) and not sg.in_ranges("C59", r)
+    assert not sg.in_ranges("Z40", r) and not sg.in_ranges("Z29", r) and not sg.in_ranges("P00", r)
 
 
 def test_age_rule_feb29_and_unknown_gender():

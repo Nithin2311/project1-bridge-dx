@@ -14,14 +14,15 @@ nodes:
   names_from: concept.csv
   flag_chapters: [R, Z]      # symptom / status codes: flagged in nodes.csv (R/Z sensitivity graph = "full")
   # Main graph excludes whole chapters (decided 2026-10-14, revised after the independent review):
-  #   R, Z  symptoms / status: higher modularity, more stable Leiden, ARI 0.85 to the full partition
+  #   R, Z  symptoms / status: higher modularity, more stable Leiden (ARI 0.61 between main and full partitions)
   #   O     pregnancy: a self-contained module (internal/external edge ratio 4.2) that rewiring nulls cannot
   #         reproduce, so its gateway codes (N93, N92, O36) dominated null-adjusted betweenness; it is also
   #         the bulk of "sex-specific" edges. Kept in the full graph as sensitivity.
   main_graph_excludes_chapters: [R, Z, O]
   # Sex-specific categories (used to separate reproductive/sex-organ structure from the rest in the sex test):
   # ICD-10-CM ranges, inclusive, by 3-char code.
-  sex_specific_ranges: [[C50, C58], [C60, C63], [D25, D28], [D39, D40], [E28, E29], [N40, N51], [N70, N98], [O00, O9A], [Q50, Q56], [Z30, Z39]]
+  # inclusive 3-char ranges; a letter in the 3rd position (O9A, Z3A) sorts after the digit 9
+  sex_specific_ranges: [[C50, C58], [C60, C63], [D25, D28], [D39, D40], [E28, E29], [N40, N53], [N60, N64], [N70, N98], [O00, O9Z], [Q50, Q56], [Z30, Z3Z]]
 
 edges:
   cooccurrence: same_patient # any time in the era (not same-visit) for the main graph
@@ -41,8 +42,10 @@ communities:
   #        module, mental health inside a 179-node musculoskeletal module).
   #   2.0: all three explicit, but expels seven high-degree acuity codes (E87, K59, D64, N17, I95, Y83, E86)
   #        into 1-4 node communities, which then top every bridge list by construction.
-  #   1.5: all three explicit (DM/HTN/lipids with HF/CKD in a 60-node module, metastatic+haem in 45, mental
-  #        health in 20), no tiny communities except the dental triple, standard Q 0.31 vs 0.28 at 2.0.
+  #   1.5: all three explicit (DM/HTN/lipids with HF/CKD in a 60-node module, metastatic 24 + haem/transplant 49,
+  #        mental health 15), six communities under 5 nodes (E08/E10/E13, dental triple, F90, G51, I95, Q89),
+  #        standard Q 0.278 vs 0.246 at 2.0. Caveat: the mental-health module is seed-sensitive (15/44/23 nodes
+  #        across seeds, see leiden_seed_stability.csv); cardiometabolic is stable (60/60/62).
   # Main = 1.5; 1.0 and 2.0 reported as sensitivity. Quality values are reported both as the RB quality at
   # this resolution (what Leiden optimises and the null is scored on) and as standard modularity (gamma = 1).
   resolution: 1.5
@@ -70,6 +73,10 @@ centrality:
   bridge_top_k: 15
   bridge_null_n: 100              # rewired nulls for the cluster-restricted betweenness (added after review)
   bridge_null_percentile_min: 0.95 # a bridge is reported only if observed >= this share of null values
+  # magnitude floor (second review N1): a node also needs a finite null z >= bridge_min_z OR an observed value
+  # >= bridge_min_share_of_max of the pair's largest value; otherwise one or two shortest paths "pass" with z undefined
+  bridge_min_z: 2.0
+  bridge_min_share_of_max: 0.10
   precedence: true                # directed first-date precedence between target clusters (sequential analysis)
 
 subgroups:
