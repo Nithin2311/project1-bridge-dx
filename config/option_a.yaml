@@ -1,6 +1,20 @@
 # Option A — locked parameters (from "Project 1 Ideas proposal.docx", Oct 8 2026).
 # Change here, never in code. Every script reads this file.
 
+# Patient split (decided 2026-10-15 after the Project 2 readiness review): every graph quantity in the main
+# analysis (node set, edges, phi, communities, bridges, node features) is computed on TRAINING patients only;
+# validation and test patients never touch the graph, so Project 2 inherits it without leakage
+# (Kapoor & Narayanan 2023 L1.2/L1.3/L3.1; Chet AAAI 2022; EHRShot convention). Full-cohort graph = sensitivity.
+split:
+  source: auto                 # auto = use `file` if it exists, else `own`
+  file: ../FinalProject/data/external/person_id_map.csv   # EHRSHOT_ASSETS/splits/person_id_map.csv from Redivis (split, omop_person_id)
+  fractions: [0.70, 0.15, 0.15]  # own split (fallback only): train / val / test by person_id
+  seed: 0
+  # Canonical EHRShot split is 34/33/33 (cohort: train 1,405 / val 1,382 / test 1,344). Decided 2026-10-15: the
+  # graph is built on train + val (2,787 patients); the canonical TEST set never touches it. Project 2 tunes by
+  # cross-validation inside train + val and reports once on test. Train-only (1,405) would leave ~3,000 edges.
+  main_graph_patients: [train, val]
+
 cohort:
   era: icd10                 # primary cohort = ICD-10 era
   era_start: "2015-10-01"    # hospital switched ICD-9 -> ICD-10
@@ -10,7 +24,7 @@ cohort:
 
 nodes:
   level: icd10_3char         # e.g. I10, E11, F41, N18
-  min_prevalence: 0.01       # >= 1% of cohort patients
+  min_prevalence: 0.01       # >= 1% of TRAINING-split cohort patients (node selection is also train-only)
   names_from: concept.csv
   flag_chapters: [R, Z]      # symptom / status codes: flagged in nodes.csv (R/Z sensitivity graph = "full")
   # Main graph excludes whole chapters (decided 2026-10-14, revised after the independent review):
@@ -66,10 +80,23 @@ centrality:
   # The bridge question is answered directly: betweenness restricted to shortest paths between two target
   # clusters (nx.betweenness_centrality_subset), plus each node's phi-weight share into each cluster.
   # A target cluster = union of the Leiden communities (main partition) that contain its anchor codes.
+  # Revised 2026-10-15: "cancer" never forms one block (metastatic and haematology/transplant cores never
+  # co-assign; breast cancer sits with gynaecology, prostate with urology), so it is two targets.
   target_clusters:
-    cardiometabolic: [E11, I50]   # diabetes/hypertension/lipids module + heart failure/CKD/arrhythmia module
-    cancer: [C79, D70]            # metastatic-disease module + hematologic/chemo-toxicity module
+    cardiometabolic: [E11, I50]   # diabetes/hypertension/lipids + heart failure/CKD/arrhythmia (one module at res 1.5)
+    cancer_metastatic: [C79]      # secondary malignancy / solid-tumour spread module
+    cancer_hematologic: [D70]     # haematologic malignancy / marrow failure / transplant module
     mental_health: [F32]          # depression/anxiety/sleep module
+  # Target membership used for bridges and Project 2 labels = STABLE CORE: nodes co-assigned with the anchor
+  # codes in >= core_min_coassignment of core_n_seeds Leiden runs at the main resolution (Lancichinetti &
+  # Fortunato 2012 style). The single-seed community and the ICD-10 chapter block are reported alongside.
+  core_n_seeds: 100
+  core_min_coassignment: 0.9
+  chapter_blocks:               # a-priori definitions (ICD-10-CM 3-char ranges, inclusive) for the chapter sensitivity
+    cardiometabolic: [[I10, I15], [I20, I25], [I48, I50], [E08, E13], [E78, E78], [N18, N18]]
+    cancer_metastatic: [[C77, C80], [C45, C49]]
+    cancer_hematologic: [[C81, C96], [D46, D47], [D60, D61], [D70, D70]]
+    mental_health: [[F20, F48]]
   bridge_top_k: 15
   bridge_null_n: 100              # rewired nulls for the cluster-restricted betweenness (added after review)
   bridge_null_percentile_min: 0.95 # a bridge is reported only if observed >= this share of null values
@@ -134,16 +161,26 @@ sensitivity:
     "793.19": R91   # abnormal findings on lung imaging
 
 project2:
-  index_date_rule: TBD       # must be written down once; both teammates run it. Candidates computed by 09:
-  # Eligibility also excludes patients with a target diagnosis in the bridged pre-2015 table (review M6).
-  # Caveat for Project 2: communities were learned on the same patients; split patients before building the graph.
+  # Landmark label design (decided 2026-10-15; Paige 2018, EHRShot new-diagnosis tasks, Abbas 2013 washout):
+  # one row per (patient, index date, target). Index dates on a calendar grid. Eligibility per row:
+  #   history >= min_history_days of ICD-10-era coding before the index (24 months: Abbas 2013)
+  #   >= 1 encounter in the require_encounter_days before the index (no "ghost" patients)
+  #   no target code anywhere in history: ICD-10-era rows AND concept-mapped pre-2015 rows
+  #   follow-up: last recorded diagnosis >= index + horizon and no death inside the horizon, else censored
+  # positive = first target code within (index, index + horizon]; censored rows are flagged, not negatives.
+  index_date_rule: landmark_grid
+  grid_start: "2017-10-01"
+  grid_step_days: 182
+  min_history_days: 730
+  require_encounter_days: 365
   horizons_months: [6, 12]
+  target_definitions: [core, community, chapter]
   index_rule_candidates:
     history_1y: first ICD-10-era diagnosis date + 365 days          # every cohort patient gets an index
     calendar_2019: "2019-01-01"                                     # fixed date; needs >= 1 dx before it
   record_end: last condition_start_DATE of the patient (any era)   # only half the patients have observation_period
   targets: target_clusters from centrality + every main community with >= min_community_size_in_tables nodes
-  horizon_months: 6          # fall back to 12 or "any new community" if positives < 150
+  horizon_months: 12         # primary horizon (12 months: EHRShot convention; 6 months reported too)
   censoring: exclude_death_or_record_end_inside_horizon
   min_positives: 150
 

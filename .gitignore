@@ -35,3 +35,9 @@ report/*.fls
 .DS_Store
 .vscode/
 .idea/
+
+# browser partial downloads and EHRSHOT assets: never
+*.crdownload
+*.part
+EHRSHOT_ASSETS*
+Unconfirmed*
