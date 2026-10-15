@@ -1,0 +1,37 @@
+# Literature brief 1: leakage and splits, index dates and censoring, temporal validation
+Compiled 2026-10-15 by an independent research agent for Project 2 design. Items marked [unverified] or [preprint] were seen in a single source or are not peer-reviewed. Reused from FinalProject/research where they fit: Wornow 2023, Hancox 2024, Monchka 2022, Ohnuma 2021, Quan 2005, Gardinazzi 2026, Sanchez-Valle 2026 (preprint), Dervic 2024/2025.
+
+## 1. Leakage and splits
+- Kapoor & Narayanan 2023 (Patterns): leakage taxonomy L1.1-L3.3; 294 affected papers across 17 fields. Project 1's situation (edges and communities computed on all patients, then used to label held-out patients) is L1.2/L1.3 (preprocessing and structure selection on train+test) and L3.1 (future diagnoses contribute to edge weights). https://doi.org/10.1016/j.patter.2023.100804
+- Davis, Matheny, Balu, Sendak 2023 (JAMIA Open): EHR label-leakage framework: aggregation-based, timing-based (codes finalized after discharge), association-based. Landmark designs are the most leakage-prone and need an explicit usable window per prediction. https://pmc.ncbi.nlm.nih.gov/articles/PMC10746313/
+- Chet (Lu, Han, Ning, AAAI 2022): global disease co-occurrence graph built from the training patients' feature (pre-label) visits only; patient-level split (MIMIC-III 6,000/493/1,000). https://doi.org/10.1609/aaai.v36i4.20380
+- Placido et al. 2023 (Nat Med): all trajectories from a patient in one split; multiple rows per patient by sampling sub-trajectories with different endpoints. https://doi.org/10.1038/s41591-023-02332-5
+- Oss Boll et al. 2024 [preprint]: once an HF code appears, that visit and all later ones are excluded. https://arxiv.org/html/2411.19742
+- Hancox et al. 2024 (Artif Intell Med): 27 patient-level graph-ML EHR studies; only one with low risk of bias. https://doi.org/10.1016/j.artmed.2024.102999
+- Briere et al. 2025 [preprint]: leakage in biomedical KG link prediction inflates metrics. https://www.biorxiv.org/content/10.1101/2025.01.23.634511v1
+- EHRShot (Wornow et al., NeurIPS D&B 2023): 6,739 patients; canonical patient-level split train 2,295 / val 2,232 / test 2,212 delivered as splits/ (not in the class extract; see benchmark repo). 15 tasks; the six "new diagnosis" tasks predict at 11:59pm on inpatient discharge day, label = diagnosis within 365 days, discharges with an existing diagnosis ignored. Label counts per split are ~130-180 positives (e.g. hypertension train 792 patients / 129 positive). https://arxiv.org/abs/2307.02028 ; https://github.com/som-shahlab/ehrshot-benchmark
+
+Implications: split by person_id before any edge or community computation (reuse the canonical split if obtainable); recompute Fisher edges, phi and Leiden on train patients' pre-index records only; define labels a priori by chapter/block or by a frozen consensus partition; evaluate inductively; include a Kapoor-Narayanan model info sheet.
+
+## 2. Index dates, horizons, censoring, prevalent vs incident
+- Landmarking: van Houwelingen 2007; Paige et al. 2018 (Am J Epidemiol) https://doi.org/10.1093/aje/kwy018 ; Goldstein et al. 2017 (JAMIA): only 16% of EHR prediction studies handled censoring appropriately. https://doi.org/10.1093/jamia/ocw042
+- One row per patient-time is standard (EHRShot ~1.6 labels per patient; Placido; MOTOR). Correlated rows handled by keeping a patient in one split and bootstrapping by patient.
+- Horizons: EHRShot 365 d; Placido 3-60 months with AUROC falling with horizon and when prodromal codes (3-12 months before diagnosis) are removed from training. https://doi.org/10.1038/s41591-023-02332-5
+- Censoring: Li et al. 2020 (BMJ, 3.6M CPRD): ignoring censoring underestimates risk. https://doi.org/10.1136/bmj.m3919 . Gao/Albu 2025 (Diagn Progn Res, parts 1-2): with complete follow-up binary, multinomial and competing-risk models agree; Cox models that censor competing events overestimate risk. https://doi.org/10.1186/s41512-025-00199-3 ; https://doi.org/10.1186/s41512-025-00194-8
+- MOTOR (Steinberg et al., ICLR 2024): time-to-event head on STARR-OMOP, handles censoring, patient split. https://arxiv.org/abs/2301.03150
+- Washout / look-back: Roberts 2015 (6-month washout leaves ~50% prevalent, 12-month ~30%) https://doi.org/10.2217/cer.14.53 ; Abbas 2013 (recommends >= 24 months) https://doi.org/10.1186/1471-2288-13-32 ; Nanditha 2022 (>= 4 years for < 20% misclassification) https://doi.org/10.1186/s12874-021-01448-x ; Kim 2020 https://doi.org/10.1186/s12913-020-5016-y ; Camplain 2017 https://doi.org/10.1002/pds.4162 ; Chisholm 2026 scoping review, no consensus https://doi.org/10.1093/epirev/mxaf019
+- Coding-switch left truncation: Ellis 2020 (JAMA Netw Open; level changes >= 20% in 16% of categories at the ICD-10 switch) https://doi.org/10.1001/jamanetworkopen.2020.2280 ; Yoon & Chow 2017 (alcohol and tobacco dependence half as often recorded under ICD-10) https://doi.org/10.1186/s12913-017-2504-9 ; Hsu 2021 https://doi.org/10.1002/pds.5330
+
+Implications: landmark design on a calendar grid from 2017-10-01 (>= 24 months of ICD-10-era coding before every index); eligibility = >= 24 months history, an encounter in the prior 12 months, no target code in any history including concept-mapped ICD-9 rows, follow-up >= horizon; exclude censored rows in the primary analysis, death as a separate class in a secondary one; 12-month horizon primary; GroupKFold or canonical split by patient; AUPRC with AUROC; Placido-style 90-day gap sensitivity.
+
+## 3. Temporal validation and drift
+- Nestor et al. 2019 (MLHC): system change in MIMIC-III cost 0.29 AUROC for mortality with raw features. https://arxiv.org/abs/1908.00690
+- Guo et al. 2022 (Sci Rep): train 2008-10, test 2017-19, max AUROC drop 0.09; retraining beats domain generalization. https://doi.org/10.1038/s41598-022-06484-1 ; Lemmon 2023 https://doi.org/10.1055/s-0043-1762904 ; Guo 2021 review: calibration drifts before discrimination. https://doi.org/10.1055/s-0041-1735184 ; Guo 2023 (Sci Rep) [DOI unverified]
+- Otles 2021 (MLHC) infrastructure shift https://proceedings.mlr.press/v149/otles21a.html ; Zhou, Chen, Lipton 2023 (CHIL) EMDOT backtesting https://proceedings.mlr.press/v209/zhou23a.html ; Finlayson 2021 (NEJM) https://doi.org/10.1056/NEJMc2104626
+- TRIPOD+AI (Collins 2024, BMJ) https://doi.org/10.1136/bmj-2023-078378 ; Riley/Collins 2024 https://doi.org/10.1136/bmj-2023-074819
+- Within-era coding drift: Sivashankaran 2019 (AMIA) https://pmc.ncbi.nlm.nih.gov/articles/PMC7153097/ ; Nelson 2024 (Digit Health; 66% of common code clusters changed across the transition) https://doi.org/10.1177/20552076241297056 ; Osei 2026 E78.01 adoption [single source] https://pmc.ncbi.nlm.nih.gov/articles/PMC12856464/
+- Comorbidity networks drift year to year: Jiang et al. 2018 (Sci Rep; consecutive-year module Jaccard as low as 0.36) https://doi.org/10.1038/s41598-018-21779-y ; Monchka 2022 https://doi.org/10.1186/s12874-022-01607-8 ; Ma 2025 (HIV Med) https://doi.org/10.1111/hiv.70147
+
+Implications: patient split primary, temporal backtest (index <= 2019-12-31 train, >= 2020-07-01 test, held-out patients) secondary; report calibration per index year; build train-only graphs on 2016-19 and 2020-22 windows and report edge Jaccard, hub overlap, ARI; write methods to TRIPOD+AI.
+
+Consensus tool notice (required by that server): Create or connect a free Consensus account to return more than 3 results per search in Claude Code.: https://consensus.app/sign-up/?utm_source=claude_code&auth=claude_code
