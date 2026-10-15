@@ -14,7 +14,7 @@ import polars as pl
 
 from bridgedx import centrality as ce
 from bridgedx import communities as cm
-from bridgedx import config, data, edges as ed, graph as gr, subgroups as sg
+from bridgedx import config, data, edges as ed, graph as gr, split, subgroups as sg
 
 cfg = config.load()
 out = config.outputs_dir(cfg)
@@ -22,10 +22,14 @@ t0 = time.time()
 k_top = int(cfg["subgroups"]["comparison"]["top_k"])
 seed0 = cfg["communities"]["seeds"][0]
 
-pc = pl.read_parquet(out / "patient_category.parquet")
+pc_all = pl.read_parquet(out / "patient_category.parquet")
 con = data.connect(cfg)
-labels = sg.assign_subgroups(con, cfg, pc)
-labels.write_csv(out / "subgroup_labels.csv")
+labels_all = sg.assign_subgroups(con, cfg, pc_all).join(pl.read_csv(out / "patient_split.csv").select("person_id", "split"), on="person_id", how="left")
+labels_all.write_csv(out / "subgroup_labels.csv")
+main_ids = split.train_ids(cfg)
+pc = pc_all.filter(pl.col("person_id").is_in(main_ids))          # subgroup graphs and tests use main-graph patients only
+labels = labels_all.filter(pl.col("person_id").is_in(main_ids))
+print(f"subgroup analysis on {len(main_ids):,} {'+'.join(split.main_splits(cfg))} patients (test split held out)")
 print("subgroup sizes: " + ", ".join(f"{k}={len(v):,}" for k, v in sg.subgroup_members(labels, cfg).items())
       + f"; age at index median {labels['age_at_index'].median():.0f} (IQR {labels['age_at_index'].quantile(0.25):.0f}-{labels['age_at_index'].quantile(0.75):.0f})")
 
@@ -35,7 +39,8 @@ nodes = nodes_all.filter(pl.col("category").is_in(list(g_main.nodes)))
 cats = nodes["category"].to_list()
 comm = pl.read_csv(out / "communities.csv")
 part_main = dict(zip(comm["category"], comm["leiden"]))
-clusters = ce.target_clusters(part_main, cfg["centrality"]["target_clusters"])
+td = pl.read_csv(out / "target_definitions.csv")
+clusters = {k: set(td.filter((pl.col("target") == k) & pl.col("in_core"))["category"].to_list()) for k in cfg["centrality"]["target_clusters"]}
 cent_main = pl.read_csv(out / "centrality.csv")
 names = dict(zip(nodes["category"], nodes["name"]))
 

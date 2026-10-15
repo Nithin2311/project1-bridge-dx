@@ -144,3 +144,30 @@ def partition_table(g: nx.Graph, parts: dict[str, dict]) -> pl.DataFrame:
     rows = [{"category": v, "name": g.nodes[v].get("name"), "chapter": g.nodes[v].get("chapter"),
              "flagged": g.nodes[v].get("flagged"), **{k: p[v] for k, p in parts.items()}} for v in g.nodes]
     return pl.DataFrame(rows).sort(list(parts)[0], "category")
+
+
+def coassignment(g: nx.Graph, cfg: dict, n_seeds: int | None = None, resolution: float | None = None) -> pl.DataFrame:
+    """Node x node co-assignment share over n_seeds Leiden runs (Lancichinetti & Fortunato 2012 consensus
+    matrix). Returns a DataFrame with a `category` column and one column per node."""
+    n_seeds = int(n_seeds or cfg["centrality"].get("core_n_seeds", 100))
+    c = cfg if resolution is None else {"communities": dict(cfg["communities"], resolution=resolution)}
+    nodes = list(g.nodes)
+    M = np.zeros((len(nodes), len(nodes)))
+    for s in range(n_seeds):
+        p = leiden(g, c, seed=s)
+        lab = np.array([p[v] for v in nodes])
+        M += (lab[:, None] == lab[None, :])
+    M /= n_seeds
+    return pl.DataFrame({"category": nodes, **{nodes[j]: M[:, j] for j in range(len(nodes))}})
+
+
+def stable_core(coassign: pl.DataFrame, anchors: list[str], min_share: float) -> list[str]:
+    """Nodes whose mean co-assignment with the anchor codes is >= min_share (anchors themselves included)."""
+    cats = coassign["category"].to_list()
+    present = [a for a in anchors if a in cats]
+    if not present:
+        return []
+    M = coassign.drop("category").to_numpy()
+    idx = {v: i for i, v in enumerate(cats)}
+    co = M[[idx[a] for a in present]].mean(axis=0)
+    return [cats[i] for i in np.argsort(-co) if co[i] >= min_share]

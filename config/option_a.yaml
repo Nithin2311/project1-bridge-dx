@@ -133,6 +133,17 @@ figures:
   sparsify: top_k_per_node      # keep each node's k strongest phi edges for the layout, nothing else
   top_k: 5
 
+project2_tables:              # step 10: non-ML tables Project 2 consumes (decided 2026-10-15)
+  backbone_top_k: 10          # per-node strongest-phi edges, union; disparity filter rejected (49 edges at alpha 0.05)
+  lookback_days: [365, 1095, 0] # patient-subgraph code windows before each index date (0 = all era history)
+  ccir_file: ../FinalProject/data/external/CCIR_v2026-1.csv   # HCUP Chronic Condition Indicator Refined v2026.1 (public)
+  inpatient_visit_concept_id: 9201
+  acute_share_threshold: 0.5  # node is "acute" if >= this share of its rows fall inside an inpatient stay
+
+stability:                    # step 11: patient bootstrap (resample main-graph patients with replacement)
+  n_bootstrap: 30
+  seed: 0
+
 sensitivity:
   runs:
     - full_graph                # all 601 nodes incl. R, Z, O chapters

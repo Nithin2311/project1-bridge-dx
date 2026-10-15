@@ -1,93 +1,67 @@
-"""Step 9: community-entry label counts for the Project 2 paragraph.
+"""Step 9: Project 2 landmark label tables.
 
-For each candidate index rule x horizon x target (the three target clusters and every main community with
->= 5 nodes): eligible = cohort patients with >= 1 diagnosis on/before index and no target diagnosis on/before
-index; positive = first target diagnosis within (index, index + horizon]; censored (excluded) = no positive
-and death or record end inside the horizon; negative = the rest.
-Writes outputs/p2_label_counts.csv. Rerunnable: `uv run python scripts/09_p2_labels.py` (after 05).
+One row per (patient, index date, target, target definition, horizon) with eligibility, positive and censoring
+flags (rules in config project2 and bridgedx.labels). Targets = the three definitions in target_definitions.csv
+(stable core, single-seed community, chapter block). Writes outputs/p2_labels.parquet and outputs/p2_label_counts.csv.
+Rerunnable: `uv run python scripts/09_p2_labels.py` (after 07).
 """
 from __future__ import annotations
 
-import datetime as dt
 import time
 
+import numpy as np
 import polars as pl
 
-from bridgedx import centrality as ce
-from bridgedx import config, data
+from bridgedx import config, data, labels as lb
 
 cfg = config.load()
 out = config.outputs_dir(cfg)
 t0 = time.time()
 p2 = cfg["project2"]
 min_pos = int(p2["min_positives"])
-horizons = [int(h) for h in p2.get("horizons_months", [p2["horizon_months"], 12])]
-min_size = int(cfg["communities"].get("min_community_size_in_tables", 5))
 
 pc = pl.read_parquet(out / "patient_category.parquet")
-pre_path = out / "patient_category_icd9era.parquet"
-pc_pre = pl.read_parquet(pre_path) if pre_path.exists() else None  # bridged pre-era diagnoses (step 7), for prior-history exclusion
-if pc_pre is None:
-    print("WARNING: patient_category_icd9era.parquet missing (run 07); pre-2015 history NOT excluded")
-comm = pl.read_csv(out / "communities.csv")
-partition = dict(zip(comm["category"], comm["leiden"]))
-summary = pl.read_csv(out / "communities_summary.csv")
-targets = ce.target_clusters(partition, cfg["centrality"]["target_clusters"])
-for r in summary.filter(pl.col("size") >= min_size).iter_rows(named=True):
-    targets[f"c{r['community']} {r['top_chapter'].split('/')[0]} ({r['top5_codes'].split()[0]})"] = {
-        v for v, c in partition.items() if c == r["community"]}
+pre_path = out / "patient_category_preera_all.parquet"
+pre = pl.read_parquet(pre_path) if pre_path.exists() else pl.DataFrame({"person_id": [], "category": []}, schema={"person_id": pl.Int64, "category": pl.Utf8})
+if not pre_path.exists():
+    print("WARNING: patient_category_preera_all.parquet missing (run 07); pre-2015 history NOT used for washout")
+sp = pl.read_csv(out / "patient_split.csv")
+split = dict(zip(sp["person_id"], sp["split"]))
+td = pl.read_csv(out / "target_definitions.csv")
+targets = {}
+for definition, col in [("core", "in_core"), ("community", "in_community"), ("chapter", "in_chapter_block")]:
+    if definition in p2.get("target_definitions", ["core", "community", "chapter"]):
+        targets[definition] = {k: set(td.filter((pl.col("target") == k) & pl.col(col))["category"].to_list()) for k in cfg["centrality"]["target_clusters"]}
 
 con = data.connect(cfg)
 con.register("_pc", pc.to_arrow())
-pat = con.execute("""
-    select p.person_id, p.first_dx, r.last_dx, d.death_DATE as death
-    from (select person_id, min(first_date) as first_dx from _pc group by 1) p
+patients = con.execute("""
+    select p.person_id, p.first_era, r.last_dx, d.death_DATE as death
+    from (select person_id, min(first_date) as first_era from _pc group by 1) p
     join (select co.person_id, max(co.condition_start_DATE) as last_dx from condition_occurrence co
           left join death d on d.person_id = co.person_id
           where d.death_DATE is null or co.condition_start_DATE <= d.death_DATE group by 1) r using (person_id)
     left join death d using (person_id)
 """).pl()
+enc = con.execute("select person_id, condition_start_DATE as dt from condition_occurrence where person_id in (select person_id from _pc)").pl()
+encounters = {k: np.array(sorted(v)) for k, v in enc.group_by("person_id").agg(pl.col("dt")).rows()}
 
-rules = {
-    "history_1y": pat.with_columns((pl.col("first_dx") + pl.duration(days=365)).alias("index")),
-    "calendar_2019": pat.with_columns(pl.lit(dt.date(2019, 1, 1)).alias("index")).filter(pl.col("first_dx") <= pl.col("index")),
-}
-
-rows = []
-for rule, base in rules.items():
-    for name, members in targets.items():
-        first_t = (pc.filter(pl.col("category").is_in(list(members)))
-                   .group_by("person_id").agg(pl.col("first_date").min().alias("first_target")))
-        df = base.join(first_t, on="person_id", how="left")
-        df = df.filter(pl.col("first_target").is_null() | (pl.col("first_target") > pl.col("index")))  # no prior target dx in era
-        if pc_pre is not None:  # no prior target dx before the era either (bridged ICD-9 table)
-            prior = pc_pre.filter(pl.col("category").is_in(list(members)))["person_id"].unique()
-            df = df.filter(~pl.col("person_id").is_in(prior))
-        for h in horizons:
-            end = pl.col("index") + pl.duration(days=int(round(h * 30.44)))
-            d = df.with_columns(
-                (pl.col("first_target").is_not_null() & (pl.col("first_target") <= end)).alias("positive"),
-                ((pl.col("death").is_not_null() & (pl.col("death") <= end)) | (pl.col("last_dx") < end)).alias("ends_inside"),
-            ).with_columns((~pl.col("positive") & pl.col("ends_inside")).alias("censored"))
-            n_pos = int(d["positive"].sum())
-            n_cen = int(d["censored"].sum())
-            n_el = d.height
-            rows.append({"rule": rule, "horizon_months": h, "target": name, "n_target_nodes": len(members),
-                         "eligible": n_el, "positives": n_pos, "censored": n_cen, "negatives": n_el - n_pos - n_cen,
-                         "positive_rate": n_pos / (n_el - n_cen) if n_el - n_cen else 0.0,
-                         "enough": n_pos >= min_pos})
-res = pl.DataFrame(rows)
-res.write_csv(out / "p2_label_counts.csv")
-
-print(f"cohort {pat.height:,}; record end = last diagnosis date (post-death rows ignored); prior history excluded from "
-      f"{'era + bridged pre-era' if pc_pre is not None else 'era only'}; min positives {min_pos}\n")
-for rule in rules:
-    print(f"rule {rule}: {rules[rule].height:,} patients with an index date")
-    for h in horizons:
-        sub = res.filter((pl.col("rule") == rule) & (pl.col("horizon_months") == h)).sort("positives", descending=True)
-        print(f"  horizon {h} months: {int(sub['enough'].sum())} of {sub.height} targets reach {min_pos} positives")
-        for r in sub.iter_rows(named=True):
-            flag = "ok " if r["enough"] else "LOW"
-            print(f"    {flag} {r['target'][:38]:38s} eligible={r['eligible']:>5,} pos={r['positives']:>4,} "
-                  f"cens={r['censored']:>4,} neg={r['negatives']:>5,} rate={r['positive_rate']:.2f}")
-print(f"\nwrote {out/'p2_label_counts.csv'}  ({time.time()-t0:.0f}s)")
+labels = lb.build_landmark_labels(cfg, pc, pre, patients, encounters, targets, split)
+labels.write_parquet(out / "p2_labels.parquet")
+summary = lb.summarize(labels, min_pos)
+summary.write_csv(out / "p2_label_counts.csv")
+grid = lb.landmark_grid(cfg, patients["last_dx"].max())
+print(f"landmark grid: {len(grid)} index dates from {grid[0]} to {grid[-1]} every {p2['grid_step_days']} d; history >= {p2['min_history_days']} d; "
+      f"encounter within {p2['require_encounter_days']} d; washout uses era + {pre['person_id'].n_unique():,} patients' bridged pre-era rows")
+print(f"{labels.height:,} rows, {labels['person_id'].n_unique():,} patients\n")
+for definition in targets:
+    print(f"definition = {definition}")
+    for h in [int(x) for x in p2["horizons_months"]]:
+        sub = summary.filter((pl.col("definition") == definition) & (pl.col("horizon_months") == h))
+        for k in cfg["centrality"]["target_clusters"]:
+            s = sub.filter(pl.col("target") == k)
+            tot = s.select(pl.col("rows").sum(), pl.col("patients").sum(), pl.col("positives").sum(), pl.col("censored").sum()).row(0)
+            by = ", ".join(f"{r['split']} {r['positives']}" for r in s.sort("split").iter_rows(named=True))
+            flag = "ok " if tot[2] >= min_pos else "LOW"
+            print(f"  {flag} {h:2d} mo {k:18s} rows={tot[0]:>6,} patients={tot[1]:>5,} positives={tot[2]:>4,} censored={tot[3]:>5,}  by split: {by}")
+print(f"\nwrote p2_labels.parquet, p2_label_counts.csv  ({time.time()-t0:.0f}s)")

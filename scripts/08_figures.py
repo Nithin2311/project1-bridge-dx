@@ -119,6 +119,16 @@ viz.latex_table(sens.select("variant", pl.col("n_patients").alias("patients"), p
                             pl.col(f"top{k_top}_bt_overlap_vs_main").alias(f"top-{k_top} overlap"), pl.col("edge_jaccard_vs_main").alias("edge Jaccard")),
                 tbl / "sensitivity.tex", "Sensitivity runs compared with the main graph and partition.", "tab:sensitivity",
                 {"ARI vs main": "{:.2f}", "ARI (non-isol.)": "{:.2f}", f"top-{k_top} overlap": "{:.2f}", "edge Jaccard": "{:.2f}"})
+td = pl.read_csv(out / "target_definitions.csv")
+trows = []
+for k in cfg["centrality"]["target_clusters"]:
+    t = td.filter(pl.col("target") == k)
+    core = t.filter("in_core")["category"].to_list(); comm_ = t.filter("in_community")["category"].to_list(); chap = t.filter("in_chapter_block")["category"].to_list()
+    trows.append({"target": k.replace("_", " "), "anchors": " ".join(cfg["centrality"]["target_clusters"][k]), "core": len(core), "community": len(comm_), "chapter block": len(chap),
+                  "core and chapter": len(set(core) & set(chap)), "core members": " ".join(sorted(core))[:120]})
+viz.latex_table(pl.DataFrame(trows), tbl / "targets.tex",
+                f"Target definitions: stable core (co-assigned with the anchors in $\\geq$ {cfg['centrality']['core_min_coassignment']} of {cfg['centrality']['core_n_seeds']} Leiden runs), single-seed community, and a-priori ICD-10 chapter block.",
+                "tab:targets")
 stats = pl.read_csv(out / "graph_stats.csv").filter(pl.col("graph") == "main").select("stat", "value")
 stats = stats.with_columns(pl.when(pl.col("value") == pl.col("value").round(0)).then(pl.col("value").cast(pl.Int64).cast(pl.Utf8))
                            .otherwise(pl.col("value").round(3).cast(pl.Utf8)).alias("value"))

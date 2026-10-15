@@ -34,31 +34,42 @@ Default data path if `EHRSHOT_DATA` is unset: `../FinalProject/data` relative to
 
 ## Pipeline (status)
 
+Every graph quantity is computed on the canonical EHRShot **train + val** patients (2,787); the canonical
+**test** patients (1,344) never touch the graph, so Project 2 inherits it without leakage.
+
 | Step | Script | Status |
 |---|---|---|
 | 0 | `00_check_data.py` — verify CSVs, row counts, DuckDB cache | works |
-| 1 | `01_cohort.py` — ICD-10 era, dedupe (patient, category), drop post-death, ≥5 categories, nodes ≥1% | works (4,131 pts, 601 nodes) |
-| 2 | `02_edges.py` — Fisher + Bonferroni + OR≥1.2 + ≥10 patients; phi, Jaccard | works (24,137 kept of 180,300 pairs) |
-| 3 | `03_graph.py` — build main (R/Z/O excluded) and full graphs, export node/edge CSVs | works (main 483 nodes, 13,088 edges, density 0.112) |
-| 4 | `04_communities.py` — Leiden (+Louvain), RB quality vs 100 rewired nulls, standard Q, naming | works (main: 20 comms at res 1.5, Q=0.278, z=152; full + res 1.0/2.0 sensitivity) |
-| 5 | `05_centrality.py` — weighted betweenness w/ null, roles, prevalence residual, cluster-restricted betweenness w/ null, precedence | works (centrality.csv, bridges.csv, cluster_precedence.csv) |
-| 6 | `06_subgroups.py` — F/M, <65/≥65 graphs; ARI (all + non-isolates), top-20 overlap, edge-wise permutation, sex-specific flags | works (5,000 perms; 74 sex-, 122 age-specific edges at FDR 0.05) |
-| 7 | `07_sensitivity.py` — ICD-9 appendix (empirical SNOMED map), in-era 2019 split, follow-up tertiles, summary with full graph + resolution sweep | works (sensitivity_summary.csv) |
-| 8 | `08_figures.py` — figures (pdf+png) and LaTeX tables | works (8 figures, 8 tables in outputs/tables) |
-| 9 | `09_p2_labels.py` — community-entry label counts for the Project 2 paragraph (prior history incl. pre-2015 excluded) | works (p2_label_counts.csv; 2 index rules x 2 horizons) |
+| 1 | `01_cohort.py` — ICD-10 era, dedupe, drop post-death, ≥5 categories; patient split (canonical file or own 70/15/15); nodes ≥1% of train+val | works (4,131 cohort; 617 nodes) |
+| 2 | `02_edges.py` — Fisher + Bonferroni + OR≥1.2 + ≥10 patients on train+val; phi, Jaccard; all-patient edges as sensitivity | works (17,248 kept; all-patients 24,149) |
+| 3 | `03_graph.py` — main graph (R/Z/O excluded), all-chapters and all-patients graphs; node/edge CSVs | works (main 496 nodes, 9,115 edges) |
+| 4 | `04_communities.py` — Leiden (+Louvain), RB quality vs 100 rewired nulls, standard Q, 100-seed consensus, stable cores for 4 targets; sensitivity variants | works (25 comms, Q=0.308, z=146; cores 53/10/21/10) |
+| 5 | `05_centrality.py` — betweenness w/ null, roles, prevalence residual, cluster-restricted betweenness w/ null and magnitude floor, precedence | works |
+| 6 | `06_subgroups.py` — F/M, <65/≥65 graphs on train+val; ARI, overlap, edge-wise permutation, sex-specific flags | works |
+| 7 | `07_sensitivity.py` — ICD-9 appendix (empirical SNOMED map), in-era temporal split, follow-up tertiles, summary | works |
+| 8 | `08_figures.py` — figures (pdf+png) and LaTeX tables | works |
+| 9 | `09_p2_labels.py` — Project 2 landmark label tables (6-month grid, 24-month washout, 3 target definitions, 2 horizons, censoring) | works |
+| 10 | `10_p2_tables.py` — Project 2 node features (structural, consensus, bridge, inpatient share, HCUP chronic, demographics), top-k backbone, patient-index subgraph stats | works |
+| 11 | `11_stability.py` — patient bootstrap: edge, target-membership and bridge persistence | works |
 
 ## Run everything from the raw CSVs
 
 ```bash
 uv sync --extra dev
-for s in scripts/0[0-9]_*.py; do uv run python "$s"; done   # ~45 min; steps 4 and 5 (null models) are the slow ones
+for s in scripts/0[0-9]_*.py scripts/1[01]_*.py; do uv run python "$s"; done   # ~75 min; steps 4, 5, 11 are the slow ones
 uv run pytest -q                                           # unit tests on synthetic data, no EHRShot needed
 ```
 
-Decisions made after the proposal (each is recorded with its reason in `config/option_a.yaml`; several were
-revised after an independent code review on 2026-10-14, see `../project1-bridge-dx-review-clone/REVIEW.md`):
-main graph drops R, Z and O chapter nodes (full graph kept as sensitivity); Leiden resolution 1.5 (1.0 and 2.0
-as sensitivity); quality reported both as RB quality at the working resolution and standard Q; 5,000 label
-permutations; age at index = age at first ICD-10-era diagnosis; target clusters defined by anchor codes;
-bridges = cluster-restricted betweenness that beats a 100-rewire null; sex-specific categories flagged in the
-sex test; ICD-9 appendix bridged with an empirical SNOMED map plus a hand map for the top unbridged codes.
+External reference files (public, not patient data): `../FinalProject/data/external/person_id_map.csv`
+(EHRShot canonical split from the Redivis `EHRSHOT_ASSETS.zip`) and `CCIR_v2026-1.csv` (HCUP chronic
+condition indicator). Without the split file, step 1 falls back to its own seeded 70/15/15 split.
+
+Decisions made after the proposal (each is recorded with its reason in `config/option_a.yaml`; revised after
+two independent code reviews on 2026-10-14/15 (`../project1-bridge-dx-review-clone/REVIEW*.md`) and the
+Project 2 readiness research (`docs/P2-READINESS.md`)):
+patient split fixed before graph building (graph on canonical train+val); main graph drops R, Z and O chapter
+nodes; Leiden resolution 1.5 (1.0 and 2.0 as sensitivity); RB quality and standard Q both reported; four targets
+(cardiometabolic, metastatic cancer, hematologic cancer, mental health) defined by 100-seed stable cores with
+single-seed community and chapter block alongside; bridges = cluster-restricted betweenness beating a 100-rewire
+null with a magnitude floor; 5,000 label permutations; sex-specific categories flagged; ICD-9 appendix bridged
+with an empirical SNOMED map plus a hand map; Project 2 labels by landmark grid with 24-month washout.

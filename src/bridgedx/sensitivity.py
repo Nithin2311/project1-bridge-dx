@@ -90,10 +90,13 @@ def build_snomed_bridge(con, cfg: dict | None = None, min_era_rows: int = 5, max
     return con.execute("select * from snomed_bridge").pl()
 
 
-def icd9_era_patient_category(con, cfg: dict) -> tuple[pl.DataFrame, dict]:
+def icd9_era_patient_category(con, cfg: dict, min_categories: int | None = None) -> tuple[pl.DataFrame, dict]:
     """Distinct (person_id, category) from rows before era_start, bridged through SNOMED; post-death rows
-    dropped; patients with >= min_distinct_categories kept. Returns (table, coverage stats)."""
+    dropped; patients with >= min_categories kept (default cfg cohort.min_distinct_categories; pass 1 for the
+    washout table used by the Project 2 labels). Returns (table, coverage stats)."""
     c = cfg["cohort"]
+    if min_categories is None:
+        min_categories = int(c["min_distinct_categories"])
     death_clause = (
         "and (d.death_DATE is null or co.condition_start_DATE <= d.death_DATE)"
         if c.get("drop_events_after_death", True) else ""
@@ -130,7 +133,7 @@ def icd9_era_patient_category(con, cfg: dict) -> tuple[pl.DataFrame, dict]:
               and coalesce(m.category, b.category) is not null
         ),
         pc as (select person_id, category, min(dt) as first_date from era group by 1, 2),
-        keep as (select person_id from pc group by 1 having count(*) >= {int(c["min_distinct_categories"])})
+        keep as (select person_id from pc group by 1 having count(*) >= {int(min_categories)})
         select pc.person_id, pc.category, pc.first_date from pc join keep using (person_id)
         order by person_id, category
     """).pl()

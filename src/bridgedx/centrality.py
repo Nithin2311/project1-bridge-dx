@@ -161,6 +161,12 @@ def _restricted_betweenness(g: nx.Graph, clusters: dict[str, set]) -> dict[str, 
     return out
 
 
+def chapter_block_targets(nodes: list[str], blocks: dict[str, list]) -> dict[str, set]:
+    """Target name -> nodes inside the configured inclusive 3-char ranges (a-priori chapter definition)."""
+    from .subgroups import in_ranges
+    return {k: {v for v in nodes if in_ranges(v, rngs)} for k, rngs in blocks.items()}
+
+
 def cluster_bridges(g: nx.Graph, clusters: dict[str, set], cfg: dict | None = None, n_null: int | None = None,
                     seed: int = 0) -> pl.DataFrame:
     """For every pair of target clusters: betweenness restricted to shortest paths (distance 1/phi) from

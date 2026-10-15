@@ -15,7 +15,7 @@ import polars as pl
 
 from bridgedx import centrality as ce
 from bridgedx import communities as cm
-from bridgedx import config, data, edges as ed, graph as gr, sensitivity as se, subgroups as sg
+from bridgedx import config, data, edges as ed, graph as gr, sensitivity as se, split, subgroups as sg
 
 cfg = config.load()
 out = config.outputs_dir(cfg)
@@ -30,8 +30,10 @@ comm = pl.read_csv(out / "communities.csv")
 part_main = dict(zip(comm["category"], comm["leiden"]))
 cent_main = pl.read_csv(out / "centrality.csv")
 top_main = cent_main.sort("betweenness", descending=True)["category"].to_list()
-pc = pl.read_parquet(out / "patient_category.parquet")
+main_ids = split.train_ids(cfg)
+pc = pl.read_parquet(out / "patient_category.parquet").filter(pl.col("person_id").is_in(main_ids))  # main-graph patients only
 main_edges = set(map(frozenset, g_main.edges))
+print(f"sensitivity runs on {len(main_ids):,} {'+'.join(split.main_splits(cfg))} patients")
 
 
 def compare(name: str, sub_pc: pl.DataFrame, members: list, note: str = "") -> dict:
@@ -71,7 +73,11 @@ excl = set(cfg["nodes"].get("main_graph_excludes_chapters", []))
 allowed = [c for c in pl.read_csv(out / "nodes.csv")["category"].to_list() if c[0] not in excl]
 bridge = se.build_snomed_bridge(con, cfg, allowed_fallback_categories=allowed)
 bridge.write_csv(out / "sensitivity_snomed_bridge.csv")
-pc9, cov = se.icd9_era_patient_category(con, cfg)
+pc9_all, cov = se.icd9_era_patient_category(con, cfg, min_categories=1)
+pc9_all.write_parquet(out / "patient_category_preera_all.parquet")   # washout table for Project 2 labels: every patient, every bridged pre-era category
+pc9 = pc9_all.filter(pl.col("person_id").is_in(main_ids))
+keep9 = pc9.group_by("person_id").len().filter(pl.col("len") >= int(cfg["cohort"]["min_distinct_categories"]))["person_id"].to_list()
+pc9 = pc9.filter(pl.col("person_id").is_in(keep9))
 pc9.write_parquet(out / "patient_category_icd9era.parquet")
 n9 = cov["n_rows"]
 print(f"ICD-9 era (< {cfg['cohort']['era_start']}): {n9:,} rows, {cov['n_patients']:,} patients; hand map {cov['rows_manual']/n9:.1%}, bridged empirical "
@@ -86,8 +92,8 @@ chk = con.execute("""
     order by 1""").pl()
 print("  spot checks (ICD-9 -> category): " + "; ".join(f"{r['icd9']}->{r['category']} ({r['source'][:3]})" for r in chk.iter_rows(named=True)))
 labels9 = pl.read_csv(out / "subgroup_labels.csv").select("person_id", "sex")
-men_preg = pc9.join(labels9, on="person_id").filter((pl.col("sex") == "male") & pl.col("category").str.starts_with("O"))["person_id"].n_unique()
-print(f"  men with pregnancy (O) codes in the bridged table: {men_preg}")
+men_preg = pc9_all.join(labels9, on="person_id").filter((pl.col("sex") == "male") & pl.col("category").str.starts_with("O"))["person_id"].n_unique()
+print(f"  men with pregnancy (O) codes in the bridged table (all patients): {men_preg}")
 pats9 = pc9["person_id"].unique().to_list()
 both = len(set(pats9) & set(pc["person_id"].unique().to_list()))
 print(f"  ICD-9-era cohort (>= {cfg['cohort']['min_distinct_categories']} categories): {len(pats9):,} patients, {both:,} also in the main cohort; "
@@ -124,7 +130,7 @@ for name, members in se.strata_by_n_categories(pc, 3).items():
 
 # (d) summary incl. step-4 variants
 res_tags = [f"res{float(r):g}" for r in cfg["communities"].get("resolution_sensitivity", [])]
-for tag, label in [("full", "full graph incl. R/Z/O, res main")] + [(t, f"main graph, res {t[3:]}") for t in res_tags]:
+for tag, label in [("allchapters", "train+val patients, all chapters incl. R/Z/O"), ("allpatients", "all cohort patients incl. test split")] + [(t, f"main graph, res {t[3:]}") for t in res_tags]:
     f = out / f"communities_{tag}.csv"
     if f.exists():
         c2 = pl.read_csv(f)

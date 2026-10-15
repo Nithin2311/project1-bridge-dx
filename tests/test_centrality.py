@@ -86,3 +86,8 @@ def test_cluster_precedence():
     r = pr.row(0, named=True)
     assert (r["n_both"], r["n_a_first"], r["n_b_first"], r["n_same_day"]) == (3, 1, 1, 1)
     assert r["median_gap_days_a_to_b"] == 152.0 and 0 < r["p_sign_test"] <= 1
+
+
+def test_chapter_block_targets():
+    t = ce.chapter_block_targets(["I10", "I25", "E11", "F32", "C78", "K21"], {"cm": [["I10", "I15"], ["E08", "E13"]], "mh": [["F20", "F48"]]})
+    assert t == {"cm": {"I10", "E11"}, "mh": {"F32"}}

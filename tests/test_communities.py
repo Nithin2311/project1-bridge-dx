@@ -61,3 +61,13 @@ def test_modularity_resolution_and_standard():
     q2 = cm.modularity(g, p, resolution=2.0)
     assert q1 > q2  # higher gamma penalises the null term more
     assert cm.modularity(g, p, {"communities": {"resolution": 1.0}}) == q1
+
+
+def test_coassignment_and_stable_core():
+    g = _two_cliques()
+    cfg = {"communities": {"resolution": 1.0, "seeds": [0], "null_model": {"n": 2}}, "centrality": {"core_n_seeds": 5, "core_min_coassignment": 0.9}}
+    co = cm.coassignment(g, cfg)
+    assert co.height == 12 and co.select("a0")[0, 0] == 1.0
+    core = cm.stable_core(co, ["a0"], 0.9)
+    assert set(core) == {f"a{i}" for i in range(6)}
+    assert cm.stable_core(co, ["zzz"], 0.9) == []

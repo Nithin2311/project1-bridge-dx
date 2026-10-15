@@ -1,10 +1,11 @@
 """Step 4: communities.
 
-Leiden (+ Louvain) on the main graph at cfg resolution, modularity vs 100 degree-preserving rewired nulls,
-seed stability, per-community description. Sensitivity: the full (R/Z-included) graph, and the main graph at
-cfg communities.resolution_sensitivity. Rerunnable: `uv run python scripts/04_communities.py` (after 03).
-Runtime ~10-15 min (100 null Leiden runs per variant; the full graph is the slow one).
-Args: optional list of variants among  main full res<r>  (default: all).
+Leiden (+ Louvain) on the main graph at cfg resolution, RB quality vs 100 degree-preserving rewired nulls,
+standard Q, seed stability, per-community description, 100-seed co-assignment matrix and the stable core of
+every target (cfg centrality.target_clusters, core_min_coassignment). Sensitivity variants: allchapters
+(R/Z/O kept), allpatients (test patients included), and the main graph at cfg resolution_sensitivity.
+Rerunnable: `uv run python scripts/04_communities.py` (after 03). Runtime ~20 min.
+Args: optional list of variants among  main allchapters allpatients res<r>  (default: all).
 """
 from __future__ import annotations
 
@@ -24,7 +25,7 @@ out = config.outputs_dir(cfg)
 seed0 = cfg["communities"]["seeds"][0]
 res_main = float(cfg["communities"]["resolution"])
 res_sens = [float(r) for r in cfg["communities"].get("resolution_sensitivity", [])]
-default = ["main", "full"] + [f"res{r:g}" for r in res_sens]
+default = ["main", "allchapters", "allpatients"] + [f"res{r:g}" for r in res_sens]
 variants = sys.argv[1:] or default
 
 
@@ -72,13 +73,12 @@ def run(tag: str, g: nx.Graph, c: dict, with_null: bool = True) -> dict:
 
 
 g_main = nx.read_graphml(out / "graph_main.graphml")
-g_full = nx.read_graphml(out / "graph_full.graphml")
 parts = {}
 for v in variants:
     if v == "main":
         parts[v] = run("main", g_main, cfg)
-    elif v == "full":
-        parts[v] = run("full", g_full, cfg)
+    elif v in ("allchapters", "allpatients"):
+        parts[v] = run(v, nx.read_graphml(out / f"graph_{v}.graphml"), cfg)
     elif v.startswith("res"):
         c = copy.deepcopy(cfg)
         c["communities"]["resolution"] = float(v[3:])
@@ -90,4 +90,28 @@ if "main" in parts:
             continue
         common = [n for n in base if n in p]
         print(f"ARI(main, {v}) on {len(common)} shared nodes: {adjusted_rand_score([base[n] for n in common], [p[n] for n in common]):.3f}")
-print(f"wrote communities*.csv, communities_summary*.csv, modularity_null*.csv, leiden_seed_stability*.csv to {out}")
+# --- consensus: 100-seed co-assignment on the main graph, stable core per target ---
+if "main" in parts:
+    t1 = time.time()
+    n_seeds = int(cfg["centrality"].get("core_n_seeds", 100))
+    co = cm.coassignment(g_main, cfg, n_seeds)
+    co.write_csv(out / "coassignment.csv")
+    min_share = float(cfg["centrality"].get("core_min_coassignment", 0.9))
+    from bridgedx import centrality as ce
+    anchors = cfg["centrality"]["target_clusters"]
+    comm_sets = ce.target_clusters(parts["main"], anchors)
+    chap_sets = ce.chapter_block_targets(list(g_main.nodes), cfg["centrality"].get("chapter_blocks", {}))
+    names = {v: d.get("name") for v, d in g_main.nodes(data=True)}
+    rows = []
+    print(f"\nstable cores ({n_seeds} seeds at resolution {res_main:g}, co-assignment with anchors >= {min_share}):")
+    for k, codes in anchors.items():
+        core = cm.stable_core(co, codes, min_share)
+        comm = comm_sets.get(k, set()); chap = chap_sets.get(k, set())
+        for v in sorted(set(core) | comm | chap):
+            rows.append({"target": k, "category": v, "name": names.get(v), "in_core": v in core, "in_community": v in comm,
+                         "in_chapter_block": v in chap, "coassignment_with_anchors": float(co.filter(pl.col("category") == v).select(codes[0])[0, 0]) if codes[0] in co.columns and v in co["category"].to_list() else None})
+        print(f"  {k:18s} core={len(core):3d} community(seed {seed0})={len(comm):3d} chapter_block={len(chap):3d} core&community={len(set(core) & comm)} core&chapter={len(set(core) & chap)}")
+        print(f"     core: {' '.join(core[:30])}{' ...' if len(core) > 30 else ''}")
+    pl.DataFrame(rows).write_csv(out / "target_definitions.csv")
+    print(f"  ({time.time()-t1:.0f}s)")
+print(f"wrote communities*.csv, communities_summary*.csv, modularity_null*.csv, leiden_seed_stability*.csv, coassignment.csv, target_definitions.csv to {out}")

@@ -60,12 +60,12 @@ print(f"\nwrote {out/'centrality.csv'}  ({time.time()-t0:.0f}s)")
 
 # --- cluster-to-cluster bridges (the research question) ---
 anchors = cfg["centrality"]["target_clusters"]
-clusters = ce.target_clusters(partition, anchors)
+td = pl.read_csv(out / "target_definitions.csv")
+clusters = {k: set(td.filter((pl.col("target") == k) & pl.col("in_core"))["category"].to_list()) for k in anchors}
 names = dict(zip(meta["category"], meta["name"]))
-print("\ntarget clusters (union of communities holding the anchor codes):")
+print("\ntarget clusters = stable cores (target_definitions.csv, in_core):")
 for k, members in clusters.items():
-    cs = sorted({partition[v] for v in members})
-    print(f"  {k:16s} communities {cs}  {len(members)} nodes: " + ", ".join(sorted(members)[:12]) + (" ..." if len(members) > 12 else ""))
+    print(f"  {k:18s} {len(members)} nodes: " + ", ".join(sorted(members)[:14]) + (" ..." if len(members) > 14 else ""))
 print(f"cluster-restricted betweenness + {cfg['centrality'].get('bridge_null_n', 0)} rewired nulls ...", flush=True)
 br = ce.cluster_bridges(g, clusters, cfg, seed=int(cfg["communities"]["seeds"][0]))
 br = br.join(meta, on="category").join(df.select("category", "community", "degree", "prevalence", "bt_null_z"), on="category")
