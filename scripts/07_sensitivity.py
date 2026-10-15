@@ -67,19 +67,22 @@ rows = []
 con = data.connect(cfg)
 con.register("_pc", pc.to_arrow())
 print("building SNOMED -> ICD-10-CM bridge (empirical era map, vocab + ancestor fallback) ...", flush=True)
-bridge = se.build_snomed_bridge(con, cfg)
+excl = set(cfg["nodes"].get("main_graph_excludes_chapters", []))
+allowed = [c for c in pl.read_csv(out / "nodes.csv")["category"].to_list() if c[0] not in excl]
+bridge = se.build_snomed_bridge(con, cfg, allowed_fallback_categories=allowed)
 bridge.write_csv(out / "sensitivity_snomed_bridge.csv")
 pc9, cov = se.icd9_era_patient_category(con, cfg)
 pc9.write_parquet(out / "patient_category_icd9era.parquet")
 n9 = cov["n_rows"]
-print(f"ICD-9 era (< {cfg['cohort']['era_start']}): {n9:,} rows, {cov['n_patients']:,} patients; bridged empirical "
+print(f"ICD-9 era (< {cfg['cohort']['era_start']}): {n9:,} rows, {cov['n_patients']:,} patients; hand map {cov['rows_manual']/n9:.1%}, bridged empirical "
       f"{cov['rows_empirical']/n9:.1%} (mean purity {cov['empirical_mean_purity']:.3f}, {cov['empirical_concepts']:,} concepts), "
       f"vocab {cov['rows_vocab']/n9:.1%}, ancestor {cov['rows_ancestor']/n9:.1%}, unbridged {cov['rows_unbridged']/n9:.1%} "
       f"(concept_id 0: {cov['rows_unmapped_concept']/n9:.2%})")
 chk = con.execute("""
-    select distinct co.condition_source_value as icd9, b.category, b.source
-    from condition_occurrence co join snomed_bridge b on b.snomed_id = co.condition_concept_id
-    where co.condition_source_value in ('300.00','401.9','250.00','202.80','585.9','272.4','311','496','V22.2','600.00')
+    select distinct co.condition_source_value as icd9, coalesce(m.category, b.category) as category, case when m.category is not null then 'manual' else b.source end as source
+    from condition_occurrence co left join _manual m on m.sv = upper(trim(co.condition_source_value))
+    left join snomed_bridge b on b.snomed_id = co.condition_concept_id
+    where co.condition_source_value in ('300.00','401.9','250.00','202.80','585.9','272.4','311','496','263.9','600.00')
     order by 1""").pl()
 print("  spot checks (ICD-9 -> category): " + "; ".join(f"{r['icd9']}->{r['category']} ({r['source'][:3]})" for r in chk.iter_rows(named=True)))
 labels9 = pl.read_csv(out / "subgroup_labels.csv").select("person_id", "sex")

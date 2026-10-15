@@ -111,6 +111,20 @@ sensitivity:
     - stratify_by_n_categories  # unequal follow-up (power-limited: report non-isolate ARI)
   temporal_split_date: "2019-01-01"
   icd9_min_era_rows_per_concept: 5   # empirical map: a SNOMED concept needs >= this many era rows
+  # Vocabulary / ancestor fallbacks may only yield categories that are nodes (nodes.csv) outside the excluded
+  # chapters: the raw vocabulary sends ICD-9 263.9 "malnutrition" to O25 (malnutrition in pregnancy) and
+  # 300.00 "anxiety state" to R45. Hand map for the most frequent ICD-9 codes the SNOMED route cannot bridge
+  # (by ICD-9 source value; applied first; chosen from the ICD-9-CM to ICD-10-CM GEM crosswalk):
+  icd9_manual_map:
+    "300.00": F41   # anxiety state, unspecified -> other anxiety disorders
+    "263.9": E46    # unspecified protein-calorie malnutrition
+    "202.80": C85   # other lymphoma, unspecified site -> other/unspecified non-Hodgkin lymphoma
+    "204.10": C91   # chronic lymphoid leukaemia -> lymphoid leukaemia
+    "425.4": I42    # other primary cardiomyopathies
+    "277.00": E84   # cystic fibrosis
+    "288.00": D70   # neutropenia
+    "V42.81": Z94   # bone marrow transplant status
+    "793.19": R91   # abnormal findings on lung imaging
 
 project2:
   index_date_rule: TBD       # must be written down once; both teammates run it. Candidates computed by 09:

@@ -39,13 +39,13 @@ Default data path if `EHRSHOT_DATA` is unset: `../FinalProject/data` relative to
 | 0 | `00_check_data.py` — verify CSVs, row counts, DuckDB cache | works |
 | 1 | `01_cohort.py` — ICD-10 era, dedupe (patient, category), drop post-death, ≥5 categories, nodes ≥1% | works (4,131 pts, 601 nodes) |
 | 2 | `02_edges.py` — Fisher + Bonferroni + OR≥1.2 + ≥10 patients; phi, Jaccard | works (24,137 kept of 180,300 pairs) |
-| 3 | `03_graph.py` — build graph, export node/edge CSVs | works (density 0.134, 1 isolate) |
-| 4 | `04_communities.py` — Leiden (+Louvain), modularity vs 100 rewired nulls, naming | works (main: 27 comms at res 2.0, Q=0.212, z=190; full + res 1.0/1.5 sensitivity) |
-| 5 | `05_centrality.py` — weighted betweenness w/ null, roles, prevalence residual, cluster-to-cluster bridges | works (centrality.csv, bridges.csv) |
-| 6 | `06_subgroups.py` — F/M, <65/≥65 graphs; ARI, top-20 overlap, edge-wise permutation | works (5,000 perms; 252 sex-, 284 age-specific edges at FDR 0.05) |
-| 7 | `07_sensitivity.py` — ICD-9 bridged appendix graph, follow-up tertiles, summary with full-graph + resolution sweep | works (sensitivity_summary.csv) |
-| 8 | `08_figures.py` — figures (pdf+png) and LaTeX tables | works (8 figures, 7 tables in outputs/tables) |
-| 9 | `09_p2_labels.py` — community-entry label counts for the Project 2 paragraph | works (p2_label_counts.csv; 2 index rules x 2 horizons) |
+| 3 | `03_graph.py` — build main (R/Z/O excluded) and full graphs, export node/edge CSVs | works (main 483 nodes, 13,088 edges, density 0.112) |
+| 4 | `04_communities.py` — Leiden (+Louvain), RB quality vs 100 rewired nulls, standard Q, naming | works (main: 20 comms at res 1.5, Q=0.278, z=152; full + res 1.0/2.0 sensitivity) |
+| 5 | `05_centrality.py` — weighted betweenness w/ null, roles, prevalence residual, cluster-restricted betweenness w/ null, precedence | works (centrality.csv, bridges.csv, cluster_precedence.csv) |
+| 6 | `06_subgroups.py` — F/M, <65/≥65 graphs; ARI (all + non-isolates), top-20 overlap, edge-wise permutation, sex-specific flags | works (5,000 perms; 74 sex-, 122 age-specific edges at FDR 0.05) |
+| 7 | `07_sensitivity.py` — ICD-9 appendix (empirical SNOMED map), in-era 2019 split, follow-up tertiles, summary with full graph + resolution sweep | works (sensitivity_summary.csv) |
+| 8 | `08_figures.py` — figures (pdf+png) and LaTeX tables | works (8 figures, 8 tables in outputs/tables) |
+| 9 | `09_p2_labels.py` — community-entry label counts for the Project 2 paragraph (prior history incl. pre-2015 excluded) | works (p2_label_counts.csv; 2 index rules x 2 horizons) |
 
 ## Run everything from the raw CSVs
 
@@ -55,7 +55,10 @@ for s in scripts/0[0-9]_*.py; do uv run python "$s"; done   # ~45 min; steps 4 a
 uv run pytest -q                                           # unit tests on synthetic data, no EHRShot needed
 ```
 
-Decisions made after the proposal (each is recorded with its reason in `config/option_a.yaml`):
-main graph drops R/Z chapter nodes (full graph kept as sensitivity); Leiden resolution 2.0 (1.0 and 1.5 as
-sensitivity); 5,000 label permutations; age at index = age at first ICD-10-era diagnosis; target clusters
-defined by anchor codes; bridges measured by cluster-restricted betweenness.
+Decisions made after the proposal (each is recorded with its reason in `config/option_a.yaml`; several were
+revised after an independent code review on 2026-10-14, see `../project1-bridge-dx-review-clone/REVIEW.md`):
+main graph drops R, Z and O chapter nodes (full graph kept as sensitivity); Leiden resolution 1.5 (1.0 and 2.0
+as sensitivity); quality reported both as RB quality at the working resolution and standard Q; 5,000 label
+permutations; age at index = age at first ICD-10-era diagnosis; target clusters defined by anchor codes;
+bridges = cluster-restricted betweenness that beats a 100-rewire null; sex-specific categories flagged in the
+sex test; ICD-9 appendix bridged with an empirical SNOMED map plus a hand map for the top unbridged codes.

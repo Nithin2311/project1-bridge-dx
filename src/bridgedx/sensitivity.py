@@ -13,9 +13,11 @@ from __future__ import annotations
 import polars as pl
 
 
-def build_snomed_bridge(con, cfg: dict | None = None, min_era_rows: int = 5, max_levels: int = 3) -> pl.DataFrame:
+def build_snomed_bridge(con, cfg: dict | None = None, min_era_rows: int = 5, max_levels: int = 3,
+                        allowed_fallback_categories: list[str] | None = None) -> pl.DataFrame:
     """SNOMED concept_id -> ONE ICD-10-CM 3-char category. Registers temp table `snomed_bridge`
-    (snomed_id, category, source, purity) and returns it.
+    (snomed_id, category, source, purity) and returns it. `allowed_fallback_categories` restricts the vocab and
+    ancestor sources (default: every category; step 7 passes the node list minus excluded chapters).
       source = 'empirical': majority category among this hospital's own ICD-10-era rows carrying that
                condition_concept_id (>= min_era_rows rows); purity = majority share
       source = 'vocab':     fallback for concepts unseen in the era: vocabulary 'Maps to' (ICD10CM -> SNOMED read
@@ -41,13 +43,18 @@ def build_snomed_bridge(con, cfg: dict | None = None, min_era_rows: int = 5, max
         from best b join tot t using (snomed_id)
         where b.rk = 1 and t.n_total >= {int(min_era_rows)}
     """)
-    con.execute("""
+    allow = ""
+    if allowed_fallback_categories is not None:
+        con.register("_allowed_df", pl.DataFrame({"category": list(allowed_fallback_categories)}).to_arrow())
+        con.execute("create or replace temp table _allowed as select * from _allowed_df")
+        allow = "and substr(c.concept_code, 1, 3) in (select category from _allowed)"
+    con.execute(f"""
         create or replace temp table _vocab as
         select snomed_id, min(category) as category, 'vocab' as source, 1.0 as purity
         from (
             select distinct r.concept_id_2 as snomed_id, substr(c.concept_code, 1, 3) as category
             from concept_relationship r join concept c on c.concept_id = r.concept_id_1
-            where r.relationship_id = 'Maps to' and c.vocabulary_id = 'ICD10CM'
+            where r.relationship_id = 'Maps to' and c.vocabulary_id = 'ICD10CM' {allow}
         ) group by snomed_id having count(*) = 1
     """)
     con.execute("""
@@ -87,17 +94,22 @@ def icd9_era_patient_category(con, cfg: dict) -> tuple[pl.DataFrame, dict]:
         "and (d.death_DATE is null or co.condition_start_DATE <= d.death_DATE)"
         if c.get("drop_events_after_death", True) else ""
     )
+    manual = (cfg.get("sensitivity", {}) or {}).get("icd9_manual_map", {}) or {}
+    con.register("_manual_df", pl.DataFrame({"sv": [str(k).upper() for k in manual], "category": [str(v) for v in manual.values()]},
+                                            schema={"sv": pl.Utf8, "category": pl.Utf8}).to_arrow())
+    con.execute("create or replace temp table _manual as select * from _manual_df")
     cov = con.execute(f"""
         with pre as (
-            select co.person_id, co.condition_concept_id as cid, co.condition_start_DATE as dt
+            select co.person_id, co.condition_concept_id as cid, co.condition_source_value as sv, co.condition_start_DATE as dt
             from condition_occurrence co left join death d on d.person_id = co.person_id
             where co.condition_start_DATE < date '{c["era_start"]}' {death_clause}
         )
         select count(*) as n_rows, count(distinct person_id) as n_patients,
+               count(*) filter (where upper(trim(sv)) in (select sv from _manual)) as rows_manual,
                count(*) filter (where cid in (select snomed_id from snomed_bridge where source = 'empirical')) as rows_empirical,
                count(*) filter (where cid in (select snomed_id from snomed_bridge where source = 'vocab')) as rows_vocab,
                count(*) filter (where cid in (select snomed_id from snomed_bridge where source = 'ancestor')) as rows_ancestor,
-               count(*) filter (where cid not in (select snomed_id from snomed_bridge)) as rows_unbridged,
+               count(*) filter (where cid not in (select snomed_id from snomed_bridge) and upper(trim(sv)) not in (select sv from _manual)) as rows_unbridged,
                count(*) filter (where cid = 0) as rows_unmapped_concept
         from pre
     """).pl().row(0, named=True)
@@ -105,11 +117,13 @@ def icd9_era_patient_category(con, cfg: dict) -> tuple[pl.DataFrame, dict]:
     cov.update({"empirical_concepts": pur["concepts"], "empirical_mean_purity": pur["mean_purity"]})
     pc = con.execute(f"""
         with era as (
-            select co.person_id, b.category, co.condition_start_DATE as dt
+            select co.person_id, coalesce(m.category, b.category) as category, co.condition_start_DATE as dt
             from condition_occurrence co
-            join snomed_bridge b on b.snomed_id = co.condition_concept_id
+            left join _manual m on m.sv = upper(trim(co.condition_source_value))
+            left join snomed_bridge b on b.snomed_id = co.condition_concept_id
             left join death d on d.person_id = co.person_id
             where co.condition_start_DATE < date '{c["era_start"]}' {death_clause}
+              and coalesce(m.category, b.category) is not null
         ),
         pc as (select person_id, category, min(dt) as first_date from era group by 1, 2),
         keep as (select person_id from pc group by 1 having count(*) >= {int(c["min_distinct_categories"])})
