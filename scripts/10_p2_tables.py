@@ -60,7 +60,9 @@ ipid = int(pt["inpatient_visit_concept_id"])
 ip = con.execute(f"""
   with ipv as (select person_id, visit_start_DATE s, coalesce(visit_end_DATE, visit_start_DATE) e from visit_occurrence where visit_concept_id = {ipid}),
   rows as (select co.person_id, m.category, co.condition_start_DATE dt from condition_occurrence co join cat_map m on m.sv = co.condition_source_value
+           left join death d on d.person_id = co.person_id
            where co.condition_start_DATE >= date '{cfg["cohort"]["era_start"]}' and m.category in (select category from _nodes)
+             and (d.death_DATE is null or co.condition_start_DATE <= d.death_DATE)
              and co.person_id in (select person_id from _main)),
   flagged as (select r.category, exists(select 1 from ipv where ipv.person_id = r.person_id and r.dt between ipv.s and ipv.e) as inpt from rows r)
   select category, count(*) n_rows_main, avg(case when inpt then 1 else 0 end) inpatient_share from flagged group by 1""").pl()
@@ -104,23 +106,25 @@ print(f"node_features.csv: {feat.height} nodes x {feat.width} columns; acute nod
 # ---- patient-index subgraph stats ----
 lbl = pl.read_parquet(out / "p2_labels.parquet").select("person_id", "index_date", "split").unique().sort("person_id", "index_date")
 era = con.execute(f"""
-  select co.person_id, m.category, min(co.condition_start_DATE) as dt
+  select distinct co.person_id, m.category, co.condition_start_DATE as dt
   from condition_occurrence co join cat_map m on m.sv = co.condition_source_value
   left join death d on d.person_id = co.person_id
   where co.condition_start_DATE >= date '{cfg["cohort"]["era_start"]}' and (d.death_DATE is null or co.condition_start_DATE <= d.death_DATE)
-    and m.category in (select category from _nodes)
-  group by 1, 2""").pl()
-by_pat = {(k[0] if isinstance(k, tuple) else k): (grp["category"].to_list(), np.array(grp["dt"].to_list())) for k, grp in era.group_by("person_id")}
-# NB: uses FIRST occurrence per category in the era; a code first seen before the window counts as present (chronic history)
+    and m.category in (select category from _nodes)""").pl()
+by_pat = {(k[0] if isinstance(k, tuple) else k): (np.array(grp["category"].to_list()), np.array(grp["dt"].to_list())) for k, grp in era.group_by("person_id")}
+# A category counts in a window if ANY recording of it falls in (index - lookback, index]; lookback 0 = any recording on/before index.
+# (Third review M2: counting only first occurrences hid chronic codes from short windows.)
 lookbacks = [int(x) for x in pt["lookback_days"]]
 rows = []
 for r in lbl.iter_rows(named=True):
-    cats, dts = by_pat.get(r["person_id"], ([], np.array([])))
+    cats, dts = by_pat.get(r["person_id"], (np.array([]), np.array([])))
     row = {"person_id": r["person_id"], "index_date": r["index_date"], "split": r["split"]}
     for lb_ in lookbacks:
         if len(cats):
-            lo = r["index_date"] - __import__("datetime").timedelta(days=lb_) if lb_ else None
-            sel = [c for c, d in zip(cats, dts) if d <= r["index_date"] and (lo is None or d > lo)]
+            mask = dts <= r["index_date"]
+            if lb_:
+                mask &= dts > r["index_date"] - __import__("datetime").timedelta(days=lb_)
+            sel = sorted(set(cats[mask].tolist()))
         else:
             sel = []
         sub = g.subgraph(sel); subb = bb.subgraph(sel)

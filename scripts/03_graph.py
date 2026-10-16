@@ -1,7 +1,7 @@
 """Step 3: build + export graphs.
 
-  graph_main.graphml         training patients, chapters in nodes.main_graph_excludes_chapters dropped -> every main analysis
-  graph_allchapters.graphml  training patients, all nodes                                            -> chapter sensitivity
+  graph_main.graphml         train+val patients, chapters in nodes.main_graph_excludes_chapters dropped -> every main analysis
+  graph_allchapters.graphml  train+val patients, all nodes                                           -> chapter sensitivity
   graph_allpatients.graphml  all cohort patients, excluded chapters dropped                          -> split sensitivity
 Deliverables graph_nodes.csv / graph_edges.csv describe the main graph. graph_stats.csv has all three.
 Rerunnable: `uv run python scripts/03_graph.py` (after 01, 02).

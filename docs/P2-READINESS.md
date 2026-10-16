@@ -1,5 +1,10 @@
 # Project 2 readiness: what Project 1 can still do, what helps, what does not
 
+> Status 2026-10-16: items A1-A9 were implemented as pipeline steps 1 (split), 4 (stable cores), 9 (landmark labels),
+> 10 (P2 tables) and 11 (bootstrap). The canonical EHRShot split WAS obtained (Redivis download) and is used; the graph is
+> built on train+val. Numbers below come from the pre-split exploration probes (notebooks/p2_probe_*.py) and differ from
+> the shipped outputs (e.g. cores 53/10/21/10, backbone 2,948 edges, 1-year lookback median 7 codes). See REVIEW3.md.
+
 Compiled 2026-10-15 from two literature briefs (docs/research/, 90 sources) and empirical probes on our data
 (notebooks/p2_probe_fast.py, notebooks/p2_probe_bootstrap.py; outputs in outputs/p2_probes/). Project 1 is
 classical network analysis only; every addition below is non-ML.

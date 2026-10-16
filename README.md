@@ -50,7 +50,7 @@ Every graph quantity is computed on the canonical EHRShot **train + val** patien
 | 8 | `08_figures.py` — figures (pdf+png) and LaTeX tables | works |
 | 9 | `09_p2_labels.py` — Project 2 landmark label tables (6-month grid, 24-month washout, 3 target definitions, 2 horizons, censoring) | works |
 | 10 | `10_p2_tables.py` — Project 2 node features (structural, consensus, bridge, inpatient share, HCUP chronic, demographics), top-k backbone, patient-index subgraph stats | works |
-| 11 | `11_stability.py` — patient bootstrap: edge, target-membership and bridge persistence | works |
+| 11 | `11_stability.py` — patient bootstrap: persistence of edges, of core members in the anchor community, and of bridge ranks | works |
 
 ## Run everything from the raw CSVs
 
@@ -71,5 +71,5 @@ patient split fixed before graph building (graph on canonical train+val); main g
 nodes; Leiden resolution 1.5 (1.0 and 2.0 as sensitivity); RB quality and standard Q both reported; four targets
 (cardiometabolic, metastatic cancer, hematologic cancer, mental health) defined by 100-seed stable cores with
 single-seed community and chapter block alongside; bridges = cluster-restricted betweenness beating a 100-rewire
-null with a magnitude floor; 5,000 label permutations; sex-specific categories flagged; ICD-9 appendix bridged
+null with a magnitude floor; 20,000 label permutations; sex-specific categories flagged; ICD-9 appendix bridged
 with an empirical SNOMED map plus a hand map; Project 2 labels by landmark grid with 24-month washout.

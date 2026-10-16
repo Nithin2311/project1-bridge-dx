@@ -1,8 +1,9 @@
 """Step 11: patient-bootstrap stability of the main graph (non-ML).
 
 Resample the main-graph patients with replacement n_bootstrap times; rebuild edges with the step-2 rule, Leiden
-at the main resolution, target cores by anchor community, and cluster-restricted betweenness (no null, for
-speed). Reports persistence of edges, target membership and bridge top-10 ranks.
+at the main resolution, the anchor communities, and cluster-restricted betweenness against the FIXED main cores
+(no null, for speed). Reports persistence of edges, of core members inside the anchor's community, and of bridge
+top-10 ranks. Pair tests use all nodes in nodes.csv so the Bonferroni m equals step 2.
 Writes outputs/stability_edges.csv, stability_target_membership.csv, stability_bridges.csv, stability_summary.csv.
 Rerunnable: `uv run python scripts/11_stability.py` (after 05). ~12 min for 30 resamples.
 """
@@ -25,8 +26,9 @@ t0 = time.time()
 main_ids = split.train_ids(cfg)
 pc = pl.read_parquet(out / "patient_category.parquet").filter(pl.col("person_id").is_in(main_ids))
 g0 = nx.read_graphml(out / "graph_main.graphml")
-nodes = pl.read_csv(out / "nodes.csv").filter(pl.col("category").is_in(list(g0.nodes)))
-cats = nodes["category"].to_list()
+nodes_all = pl.read_csv(out / "nodes.csv")           # all 617 nodes: the pair test uses the same Bonferroni m as step 2
+nodes = nodes_all.filter(pl.col("category").is_in(list(g0.nodes)))
+cats = nodes_all["category"].to_list()
 anchors = cfg["centrality"]["target_clusters"]
 td = pl.read_csv(out / "target_definitions.csv")
 cores = {k: set(td.filter((pl.col("target") == k) & pl.col("in_core"))["category"].to_list()) for k in anchors}
@@ -44,7 +46,7 @@ for b in range(B):
         e = frozenset((u, v)); edge_count[e] = edge_count.get(e, 0) + 1
     p = cm.leiden(g, cfg, seed=0)
     cl = ce.target_clusters(p, anchors)
-    for k in anchors:
+    for k in anchors:  # membership of the anchor's seed-0 COMMUNITY in the resample (not a recomputed core)
         for v in cl[k]:
             member_count[k][v] = member_count[k].get(v, 0) + 1
     br = ce.cluster_bridges(g, cores)
@@ -70,8 +72,8 @@ rows = [{"quantity": "main edges persistence median", "value": mm["persistence"]
 print(f"\nmain edges {mm.height:,}: persistence median {mm['persistence'].median():.2f}, >= 0.9 {(mm['persistence'] >= 0.9).mean():.1%}, < 0.5 {(mm['persistence'] < 0.5).sum():,}")
 for k in anchors:
     s = mem.filter((pl.col("target") == k) & pl.col("in_core"))
-    rows.append({"quantity": f"{k} core members persistence >= 0.8 share", "value": (s["persistence"] >= 0.8).mean() if s.height else None})
-    print(f"  {k:18s} core {len(cores[k])}: in anchor community in >= 80% of resamples: {(s['persistence'] >= 0.8).sum()}; < 50%: {(s['persistence'] < 0.5).sum()}")
+    rows.append({"quantity": f"{k} core members in anchor community >= 80% of resamples (share)", "value": (s["persistence"] >= 0.8).mean() if s.height else None})
+    print(f"  {k:18s} core {len(cores[k])}: core members found in the anchor's community in >= 80% of resamples: {(s['persistence'] >= 0.8).sum()}; < 50%: {(s['persistence'] < 0.5).sum()}")
 for pair in brs["pair"].unique().sort():
     surv = br0.filter((pl.col("pair") == pair) & pl.col("bridge_pass"))["category"].to_list()
     top = brs.filter(pl.col("pair") == pair).head(6)

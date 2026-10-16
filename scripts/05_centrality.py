@@ -91,10 +91,11 @@ print(f"wrote {out/'bridges.csv'}, {out/'bridges_direct_edges.csv'}")
 
 # --- directed precedence between target clusters (sequential analysis) ---
 if cfg["centrality"].get("precedence", True):
-    pc = pl.read_parquet(out / "patient_category.parquet")
+    from bridgedx import split
+    pc = pl.read_parquet(out / "patient_category.parquet").filter(pl.col("person_id").is_in(split.train_ids(cfg)))  # main-graph patients only
     prec = ce.cluster_precedence(pc, clusters)
     prec.write_csv(out / "cluster_precedence.csv")
-    print("\nfirst-diagnosis precedence between target clusters (patients entering both):")
+    print(f"\nfirst-recording precedence between target clusters ({pc['person_id'].n_unique():,} main-graph patients entering both):")
     for r in prec.iter_rows(named=True):
         print(f"  {r['from']} -> {r['to']}: n_both={r['n_both']:,}  {r['from'][:6]} first {r['n_a_first']:,} ({r['share_a_first']:.0%}), "
               f"{r['to'][:6]} first {r['n_b_first']:,}, same day {r['n_same_day']:,}; median gap {r['median_gap_days_a_to_b']:.0f} / {r['median_gap_days_b_to_a']:.0f} d; sign-test p={r['p_sign_test']:.2g}")

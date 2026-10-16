@@ -10,7 +10,7 @@ Rules (config subgroups.*):
   * age_at_index = floor(years from person.birth_DATETIME to index_date); over65 if >= cut
   * sex from person.gender_concept_id via subgroups.age_rule.sex_concept_ids
   * each subgroup graph: same node set as the main graph; edges re-tested inside the subgroup with the
-    step-2 rule (Fisher, Bonferroni over the same m, OR, min shared patients); weight = phi in the subgroup
+    step-2 rule (Fisher, Bonferroni over C(n_nodes, 2) of the subgroup node set, OR, min shared patients); weight = phi in the subgroup
   * edge-wise permutation: for every main-graph edge, phi_A - phi_B observed vs n_permutations shuffles of
     the group label across patients; two-sided empirical p, Benjamini-Hochberg FDR
 """

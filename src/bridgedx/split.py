@@ -24,6 +24,12 @@ def assign_split(person_ids: list, cfg: dict) -> pl.DataFrame:
     if use_file:
         f = pl.read_csv(path)
         col = "omop_person_id" if "omop_person_id" in f.columns else "person_id"
+        bad = set(f["split"].unique().to_list()) - {"train", "val", "test"}
+        if bad:
+            raise ValueError(f"split file {path} has unexpected split labels {sorted(bad)}; expected train/val/test")
+        for m_ in main_splits(cfg):
+            if m_ not in set(f["split"].unique().to_list()):
+                raise ValueError(f"split file {path} has no '{m_}' rows but config main_graph_patients needs it")
         m = dict(zip(f[col].cast(pl.Int64).to_list(), f["split"].to_list()))
         rows = [{"person_id": p, "split": m.get(p), "split_source": "file" if p in m else "missing"} for p in ids]
         df = pl.DataFrame(rows)

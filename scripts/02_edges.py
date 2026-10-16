@@ -1,6 +1,6 @@
 """Step 2: edge list.
 
-Main edges (outputs/edges.csv): every node pair tested on TRAINING patients only (cfg split.main_graph_patients).
+Main edges (outputs/edges.csv): every node pair tested on the main-graph patients only (cfg split.main_graph_patients = train + val).
 Sensitivity edges (outputs/edges_allpatients.csv): the same test on all cohort patients.
 Rerunnable: `uv run python scripts/02_edges.py` (after 01).
 """

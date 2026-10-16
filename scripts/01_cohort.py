@@ -2,7 +2,7 @@
 
 Reads condition_occurrence / death / concept through DuckDB, applies the rules in config/option_a.yaml,
 writes outputs/patient_category.parquet (all cohort patients), outputs/patient_split.csv (train/val/test),
-outputs/nodes.csv (categories with prevalence >= min_prevalence among TRAINING patients), outputs/cohort_funnel.csv.
+outputs/nodes.csv (categories with prevalence >= min_prevalence among the main-graph train+val patients), outputs/cohort_funnel.csv.
 Rerunnable from the raw CSVs: `uv run python scripts/01_cohort.py`.
 """
 from __future__ import annotations

@@ -2,8 +2,9 @@
 # Change here, never in code. Every script reads this file.
 
 # Patient split (decided 2026-10-15 after the Project 2 readiness review): every graph quantity in the main
-# analysis (node set, edges, phi, communities, bridges, node features) is computed on TRAINING patients only;
-# validation and test patients never touch the graph, so Project 2 inherits it without leakage
+# analysis (node set, edges, phi, communities, cores, bridges, precedence, node features) is computed on the
+# main_graph_patients splits (train + val); the canonical TEST patients never touch the graph, so Project 2
+# inherits it without leakage
 # (Kapoor & Narayanan 2023 L1.2/L1.3/L3.1; Chet AAAI 2022; EHRShot convention). Full-cohort graph = sensitivity.
 split:
   source: auto                 # auto = use `file` if it exists, else `own`
@@ -24,7 +25,7 @@ cohort:
 
 nodes:
   level: icd10_3char         # e.g. I10, E11, F41, N18
-  min_prevalence: 0.01       # >= 1% of TRAINING-split cohort patients (node selection is also train-only)
+  min_prevalence: 0.01       # >= 1% of main-graph (train+val) cohort patients; node selection never sees test patients
   names_from: concept.csv
   flag_chapters: [R, Z]      # symptom / status codes: flagged in nodes.csv (R/Z sensitivity graph = "full")
   # Main graph excludes whole chapters (decided 2026-10-14, revised after the independent review):
@@ -52,7 +53,7 @@ edges:
 communities:
   algorithm: leiden          # report louvain too
   # Resolution (RB configuration model; 1.0 = plain modularity). Decided 2026-10-14, revised after review:
-  #   1.0: the three target clusters do not exist as modules (cardiometabolic inside a 121-node heart-failure
+  #   1.0: the target clusters do not exist as modules (cardiometabolic inside a 121-node heart-failure
   #        module, mental health inside a 179-node musculoskeletal module).
   #   2.0: all three explicit, but expels seven high-degree acuity codes (E87, K59, D64, N17, I95, Y83, E86)
   #        into 1-4 node communities, which then top every bridge list by construction.
@@ -92,6 +93,9 @@ centrality:
   # Fortunato 2012 style). The single-seed community and the ICD-10 chapter block are reported alongside.
   core_n_seeds: 100
   core_min_coassignment: 0.9
+  core_sensitivity_coassignment: 0.8   # second core at a looser cut, reported alongside (third review M3)
+  # Note (third review M3): the mean-over-anchors rule lets E11 into the cardiometabolic core although E11 is
+  # co-assigned with the I50 block in 87% of seeds, not 90%; target_definitions.csv carries per-anchor columns.
   chapter_blocks:               # a-priori definitions (ICD-10-CM 3-char ranges, inclusive) for the chapter sensitivity
     cardiometabolic: [[I10, I15], [I20, I25], [I48, I50], [E08, E13], [E78, E78], [N18, N18]]
     cancer_metastatic: [[C77, C80], [C45, C49]]
@@ -146,7 +150,8 @@ stability:                    # step 11: patient bootstrap (resample main-graph 
 
 sensitivity:
   runs:
-    - full_graph                # all 601 nodes incl. R, Z, O chapters
+    - all_chapters              # all 617 nodes incl. R, Z, O chapters (train+val patients)
+    - all_patients              # excluded chapters dropped, all 4,131 cohort patients incl. the test split
     - resolution_sweep          # Leiden at 1.0 and 2.0
     - icd9_bridged_appendix     # rows before era_start; SNOMED -> category via the EMPIRICAL map learned from
                                 # this hospital's own ICD-10-era rows (majority category per SNOMED concept),

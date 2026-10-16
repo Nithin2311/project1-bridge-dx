@@ -14,6 +14,7 @@ import sys
 import time
 
 import networkx as nx
+import numpy as np
 import polars as pl
 from sklearn.metrics import adjusted_rand_score
 
@@ -27,6 +28,7 @@ res_main = float(cfg["communities"]["resolution"])
 res_sens = [float(r) for r in cfg["communities"].get("resolution_sensitivity", [])]
 default = ["main", "allchapters", "allpatients"] + [f"res{r:g}" for r in res_sens]
 variants = sys.argv[1:] or default
+consensus_only = variants == ["consensus"]   # recompute target_definitions.csv from saved communities.csv + coassignment.csv
 
 
 def run(tag: str, g: nx.Graph, c: dict, with_null: bool = True) -> dict:
@@ -74,6 +76,10 @@ def run(tag: str, g: nx.Graph, c: dict, with_null: bool = True) -> dict:
 
 g_main = nx.read_graphml(out / "graph_main.graphml")
 parts = {}
+if consensus_only:
+    c0 = pl.read_csv(out / "communities.csv")
+    parts["main"] = dict(zip(c0["category"], c0["leiden"]))
+    variants = []
 for v in variants:
     if v == "main":
         parts[v] = run("main", g_main, cfg)
@@ -94,9 +100,13 @@ if "main" in parts:
 if "main" in parts:
     t1 = time.time()
     n_seeds = int(cfg["centrality"].get("core_n_seeds", 100))
-    co = cm.coassignment(g_main, cfg, n_seeds)
-    co.write_csv(out / "coassignment.csv")
+    if consensus_only and (out / "coassignment.csv").exists():
+        co = pl.read_csv(out / "coassignment.csv")
+    else:
+        co = cm.coassignment(g_main, cfg, n_seeds)
+        co.write_csv(out / "coassignment.csv")
     min_share = float(cfg["centrality"].get("core_min_coassignment", 0.9))
+    alt_share = float(cfg["centrality"].get("core_sensitivity_coassignment", 0.8))
     from bridgedx import centrality as ce
     anchors = cfg["centrality"]["target_clusters"]
     comm_sets = ce.target_clusters(parts["main"], anchors)
@@ -104,14 +114,26 @@ if "main" in parts:
     names = {v: d.get("name") for v, d in g_main.nodes(data=True)}
     rows = []
     print(f"\nstable cores ({n_seeds} seeds at resolution {res_main:g}, co-assignment with anchors >= {min_share}):")
+    cats_co = co["category"].to_list(); M = co.drop("category").to_numpy(); idx = {v: i for i, v in enumerate(cats_co)}
     for k, codes in anchors.items():
         core = cm.stable_core(co, codes, min_share)
+        core_alt = cm.stable_core(co, codes, alt_share)
         comm = comm_sets.get(k, set()); chap = chap_sets.get(k, set())
-        for v in sorted(set(core) | comm | chap):
-            rows.append({"target": k, "category": v, "name": names.get(v), "in_core": v in core, "in_community": v in comm,
-                         "in_chapter_block": v in chap, "coassignment_with_anchors": float(co.filter(pl.col("category") == v).select(codes[0])[0, 0]) if codes[0] in co.columns and v in co["category"].to_list() else None})
-        print(f"  {k:18s} core={len(core):3d} community(seed {seed0})={len(comm):3d} chapter_block={len(chap):3d} core&community={len(set(core) & comm)} core&chapter={len(set(core) & chap)}")
+        present = [a for a in codes if a in idx]
+        for v in sorted(set(core) | set(core_alt) | comm | chap):
+            per = [float(M[idx[a], idx[v]]) for a in present] if v in idx else []
+            rows.append({"target": k, "category": v, "name": names.get(v), "in_core": v in core, f"in_core_{alt_share:g}": v in core_alt,
+                         "in_community": v in comm, "in_chapter_block": v in chap,
+                         "coassignment_mean_anchors": float(np.mean(per)) if per else None,
+                         "coassignment_min_anchors": float(min(per)) if per else None,
+                         **{f"coassignment_{a}": float(M[idx[a], idx[v]]) if v in idx else None for a in present}})
+        anchor_pair = f"; anchors co-assigned with each other {M[idx[present[0]], idx[present[1]]]:.2f}" if len(present) > 1 else ""
+        print(f"  {k:18s} core(>={min_share:g})={len(core):3d} core(>={alt_share:g})={len(core_alt):3d} community(seed {seed0})={len(comm):3d} chapter_block={len(chap):3d} "
+              f"core&community={len(set(core) & comm)} core&chapter={len(set(core) & chap)}{anchor_pair}")
         print(f"     core: {' '.join(core[:30])}{' ...' if len(core) > 30 else ''}")
+        extra = [v for v in core_alt if v not in core]
+        if extra:
+            print(f"     added at >= {alt_share:g}: {' '.join(extra)}")
     pl.DataFrame(rows).write_csv(out / "target_definitions.csv")
     print(f"  ({time.time()-t1:.0f}s)")
 print(f"wrote communities*.csv, communities_summary*.csv, modularity_null*.csv, leiden_seed_stability*.csv, coassignment.csv, target_definitions.csv to {out}")

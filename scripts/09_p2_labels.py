@@ -43,7 +43,8 @@ patients = con.execute("""
           where d.death_DATE is null or co.condition_start_DATE <= d.death_DATE group by 1) r using (person_id)
     left join death d using (person_id)
 """).pl()
-enc = con.execute("select person_id, condition_start_DATE as dt from condition_occurrence where person_id in (select person_id from _pc)").pl()
+enc = con.execute("""select co.person_id, co.condition_start_DATE as dt from condition_occurrence co left join death d on d.person_id = co.person_id
+                     where co.person_id in (select person_id from _pc) and (d.death_DATE is null or co.condition_start_DATE <= d.death_DATE)""").pl()
 encounters = {k: np.array(sorted(v)) for k, v in enc.group_by("person_id").agg(pl.col("dt")).rows()}
 
 labels = lb.build_landmark_labels(cfg, pc, pre, patients, encounters, targets, split)
@@ -60,8 +61,8 @@ for definition in targets:
         sub = summary.filter((pl.col("definition") == definition) & (pl.col("horizon_months") == h))
         for k in cfg["centrality"]["target_clusters"]:
             s = sub.filter(pl.col("target") == k)
-            tot = s.select(pl.col("rows").sum(), pl.col("patients").sum(), pl.col("positives").sum(), pl.col("censored").sum()).row(0)
-            by = ", ".join(f"{r['split']} {r['positives']}" for r in s.sort("split").iter_rows(named=True))
+            tot = s.filter(pl.col("split") == "all").select("rows", "patients", "positives", "censored").row(0)
+            by = ", ".join(f"{r['split']} {r['positives']}" for r in s.filter(pl.col("split") != "all").sort("split").iter_rows(named=True))
             flag = "ok " if tot[2] >= min_pos else "LOW"
             print(f"  {flag} {h:2d} mo {k:18s} rows={tot[0]:>6,} patients={tot[1]:>5,} positives={tot[2]:>4,} censored={tot[3]:>5,}  by split: {by}")
 print(f"\nwrote p2_labels.parquet, p2_label_counts.csv  ({time.time()-t0:.0f}s)")

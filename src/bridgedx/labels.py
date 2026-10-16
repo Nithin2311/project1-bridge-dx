@@ -7,6 +7,7 @@ Rules (config project2):
                  no target code on/before index in the ICD-10 era, and none in the bridged pre-era table
   positive:      first target code in (index, index + horizon]
   censored:      no positive and (death <= index + horizon or last diagnosis < index + horizon)
+  no row is emitted once the patient's record has ended (last pre-death diagnosis < index) or after death.
   a patient contributes rows until the first positive or censoring for that target.
 """
 from __future__ import annotations
@@ -58,6 +59,8 @@ def build_landmark_labels(cfg: dict, pc: pl.DataFrame, pre: pl.DataFrame, patien
                     for t in grid:
                         if r["first_era"] > t - min_hist:
                             continue
+                        if r["last_dx"] < t or (r["death"] is not None and r["death"] < t):
+                            break  # record ended before this index date (third review M4)
                         if enc is None or not ((enc > t - enc_win) & (enc <= t)).any():
                             continue
                         if f is not None and f <= t:
@@ -77,9 +80,13 @@ def build_landmark_labels(cfg: dict, pc: pl.DataFrame, pre: pl.DataFrame, patien
 
 
 def summarize(labels: pl.DataFrame, min_pos: int) -> pl.DataFrame:
-    return (labels.group_by("definition", "target", "horizon_months", "split")
-            .agg(pl.len().alias("rows"), pl.col("person_id").n_unique().alias("patients"),
-                 pl.col("positive").sum().alias("positives"), pl.col("censored").sum().alias("censored"))
+    """Counts per (definition, target, horizon, split) plus an 'all' split row; `enough` = positives >= min_pos
+    on the 'all' row (per-split rows carry their own count)."""
+    agg = [pl.len().alias("rows"), pl.col("person_id").n_unique().alias("patients"),
+           pl.col("positive").sum().alias("positives"), pl.col("censored").sum().alias("censored")]
+    per = labels.group_by("definition", "target", "horizon_months", "split").agg(*agg)
+    tot = labels.group_by("definition", "target", "horizon_months").agg(*agg).with_columns(pl.lit("all").alias("split"))
+    return (pl.concat([per, tot.select(per.columns)])
             .with_columns((pl.col("positives") / (pl.col("rows") - pl.col("censored"))).alias("positive_rate"),
                           (pl.col("positives") >= min_pos).alias("enough"))
             .sort("definition", "target", "horizon_months", "split"))
