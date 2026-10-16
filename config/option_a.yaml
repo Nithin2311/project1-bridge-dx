@@ -191,6 +191,11 @@ project2:
   require_encounter_days: 365
   horizons_months: [6, 12]
   target_definitions: [core, community, chapter]
+  # decided 2026-10-16: the stable core is the PRIMARY definition for every target in the Project 1 report and
+  # Project 2 labels (community and chapter as sensitivity), including cancer_metastatic where the 10-node core
+  # yields 117 positives at 12 months vs 283 for the 51-node single-seed community; the community is the least
+  # stable definition and choosing it for its positive count would select the label by outcome.
+  primary_target_definition: core
   index_rule_candidates:
     history_1y: first ICD-10-era diagnosis date + 365 days          # every cohort patient gets an index
     calendar_2019: "2019-01-01"                                     # fixed date; needs >= 1 dx before it
