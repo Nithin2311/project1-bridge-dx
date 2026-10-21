@@ -1,5 +1,6 @@
 # data: never
 data/
+ehrshot/
 *.csv
 *.csv.gz
 *.parquet
@@ -21,15 +22,10 @@ __pycache__/
 # notebooks checkpoints
 .ipynb_checkpoints/
 
-# latex
-report/*.aux
-report/*.log
-report/*.out
-report/*.bbl
-report/*.blg
-report/*.synctex.gz
-report/*.fdb_latexmk
-report/*.fls
+# Report is maintained in Overleaf
+report/*
+!report/.gitkeep
+!report/make_report_figures.py
 
 # os / editor
 .DS_Store

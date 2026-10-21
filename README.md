@@ -18,9 +18,23 @@ docs/DATA.md              where the data lives and how the loader finds it
 src/bridgedx/             library: data -> cohort -> edges -> graph -> communities/centrality/subgroups -> viz
 scripts/NN_*.py           pipeline steps, run in order; each writes to outputs/
 outputs/                  node list, edge list, metrics tables, figures (gitignored except .gitkeep)
-report/                   LaTeX (later; Overleaf mirror)
+report/                   local report files; shared report is maintained in Overleaf
 tests/                    small unit tests on synthetic data
 ```
+
+## Report and Overleaf
+
+The shared report is maintained in Overleaf. Files in `report/` are local working copies and may differ
+from the current Overleaf version. Use Overleaf for report edits and review.
+
+The report figure generator, `report/make_report_figures.py`, reads existing aggregate results from
+`outputs/` and writes PDF and PNG figures to `report/figures/`. Run it locally from the repository root:
+
+```bash
+uv run python report/make_report_figures.py
+```
+
+Upload updated figures to Overleaf when the analysis results change. The generator does not rerun the analysis.
 
 ## Setup
 
