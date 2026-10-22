@@ -147,7 +147,7 @@ def subgroup_bridges_plot(df: pl.DataFrame, path, pair: str, groups: list[str], 
         ranks[gname] = {c: i + 1 for i, c in enumerate(s["category"].to_list())}
     rows = sorted({c for gname in groups for c, r in ranks[gname].items() if r <= top_n},
                   key=lambda c: sum(min(ranks[gname].get(c, 99), 30) for gname in groups))
-    fig, ax = plt.subplots(figsize=(3.6, 0.22 * len(rows) + 0.9))
+    fig, ax = plt.subplots(figsize=(3.6, 0.19 * len(rows) + 0.8))
     for j, gname in enumerate(groups):
         for i, c in enumerate(rows):
             r = ranks[gname].get(c)
@@ -228,10 +228,10 @@ def bridge_stability_plot(st: pl.DataFrame, bridges: pl.DataFrame, path, names: 
         for y, c, v in zip(ys, cats, vals):
             ax.barh(y, v, height=0.62, color=PALETTE[0] if c in passed else "white",
                     edgecolor=PALETTE[0], linewidth=0.8, zorder=3)
-            ax.annotate(f"{int(np.rint(v * n_bootstrap))}/{n_bootstrap}", (v, y), fontsize=5.5, color=INK2,
+            ax.annotate(f"{int(np.rint(v * n_bootstrap))}/{n_bootstrap}", (v, y), fontsize=6, color=INK2,
                         xytext=(2, 0), textcoords="offset points", va="center")
         ax.set_yticks(ys)
-        ax.set_yticklabels([f"{c}  {names.get(c, '')[:20]}" for c in cats], fontsize=5.8)
+        ax.set_yticklabels([f"{c}  {names.get(c, '')[:20]}" for c in cats], fontsize=6.2)
         ax.invert_yaxis()
         ax.set_xlim(0, 1.22)
         ax.set_xticks([0, 0.5, 1.0])

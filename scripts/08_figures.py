@@ -51,7 +51,7 @@ viz.modularity_null_plot(q_null, float(mod["q_observed"]), out / "fig_modularity
                          resolution=float(mod.get("resolution", cfg["communities"]["resolution"])),
                          q_standard=float(mod["q_standard_observed"]) if "q_standard_observed" in mod else None)
 for pair in sub_bridges["pair"].unique().sort():
-    viz.subgroup_bridges_plot(sub_bridges, out / f"fig_bridges_{pair}.pdf", pair, groups, names)
+    viz.subgroup_bridges_plot(sub_bridges, out / f"fig_bridges_{pair}.pdf", pair, groups, names, top_n=8)  # 8 keeps it under a column
 from bridgedx import subgroups as sg
 ranges = cfg["nodes"].get("sex_specific_ranges", [])
 panels = []
