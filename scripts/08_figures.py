@@ -32,9 +32,24 @@ bridges = pl.read_csv(out / "bridges.csv")
 sub_bridges = pl.read_csv(out / "subgroup_bridges.csv")
 groups = cfg["subgroups"]["groups"]["sex"] + cfg["subgroups"]["groups"]["age"]["labels"]
 
-# descriptive community names: top chapter + first top-5 code (describe before naming; the report may rename)
-comm_names = {r["community"]: f"c{r['community']} {r['top_chapter'].split('/')[0]}: {r['top5_codes'].split()[0]}"
+# legend names: the four target communities carry the report's names and their anchor; the rest are described by
+# top chapter and strongest member (describe before naming)
+chapter_of = dict(zip(cent["category"], cent["chapter"]))  # chapter of the strongest member, not the community's plurality chapter
+comm_names = {r["community"]: f"{chapter_of.get(r['top5_codes'].split()[0], r['top_chapter']).split('/')[0]}: {r['top5_codes'].split()[0]}"
               for r in summary.iter_rows(named=True)}
+target_label = {"cardiometabolic": "Cardiometabolic", "cancer_metastatic": "Metastatic cancer", "cancer_hematologic": "Hematology", "mental_health": "Mental health"}
+td_ = pl.read_csv(out / "target_definitions.csv")
+for tgt, anchors in cfg["centrality"]["target_clusters"].items():
+    members = td_.filter((pl.col("target") == tgt) & pl.col("in_core"))["category"].to_list()
+    comms = [partition[m] for m in members if m in partition]
+    if comms:
+        c_mode = max(set(comms), key=comms.count)
+        comm_names[c_mode] = f"{target_label.get(tgt, tgt)} ({'/'.join(anchors)})"
+# short names shared by the report's bridge table and the stability bar chart
+short_names = {"N17": "Acute kidney failure", "D63": "Chronic-disease anemia", "A41": "Sepsis", "J90": "Pleural effusion",
+               "E43": "Severe malnutrition", "E87": "Fluid/electrolyte disorders", "F05": "Delirium", "E44": "Mild/moderate malnutrition",
+               "D89": "Immune-mechanism disorders", "K59": "Functional intestinal disorders", "G89": "Pain", "K63": "Other intestinal diseases",
+               "L29": "Pruritus"}
 
 # color the target-cluster communities first (the research question), then the largest others
 priority = []
@@ -72,8 +87,8 @@ if stab_path.exists():
     stab_df = pl.read_csv(stab_path)
     n_boot_ = int(cfg["stability"]["n_bootstrap"])
     viz.bridge_stability_plot(stab_df, bridges, out / "fig_bridge_stability.pdf", names, n_bootstrap=n_boot_)
-    viz.bridge_stability_bars(stab_df, bridges, out / "fig_bridge_stability_bars.pdf", names, n_bootstrap=n_boot_)
-    viz.compact_tables(bridges, stab_df, pl.read_csv(out / "subgroup_comparison.csv"), names, n_boot_, tbl)
+    viz.bridge_stability_bars(stab_df, bridges, out / "fig_bridge_stability_bars.pdf", {**names, **short_names}, n_bootstrap=n_boot_)
+    viz.compact_tables(bridges, stab_df, pl.read_csv(out / "subgroup_comparison.csv"), {**names, **short_names}, n_boot_, tbl)
 else:
     print("stability_bridges.csv not found (run 11_stability.py); skipping fig_bridge_stability")
 

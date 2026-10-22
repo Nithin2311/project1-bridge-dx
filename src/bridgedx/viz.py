@@ -62,8 +62,8 @@ def community_layout(g, partition, path, top_k: int = 5, n_colored: int = 8, lab
     slot = {c: PALETTE[i] for i, c in enumerate(order[:n_colored])}
     pos = nx.spring_layout(h, weight=None, seed=seed, k=1.6 / np.sqrt(h.number_of_nodes()), iterations=300)
     # compact full-width layout: drawing on the left 68%, legend and graph size on the right (no title; the caption says it)
-    fig = plt.figure(figsize=(7.1, 3.3))
-    ax = fig.add_axes([0.0, 0.01, 0.68, 0.98])
+    fig = plt.figure(figsize=(7.1, 3.5))
+    ax = fig.add_axes([0.0, 0.01, 0.66, 0.98])
     ax.set_axis_off()
     ax.grid(False)
     nx.draw_networkx_edges(h, pos, ax=ax, width=0.22, alpha=0.22, edge_color="#8b969c")
@@ -79,18 +79,20 @@ def community_layout(g, partition, path, top_k: int = 5, n_colored: int = 8, lab
             # skip a label that would sit on top of one already placed (layout units; the axes span about 2 units)
             if any(abs(pos[v][0] - px) < 0.06 and abs(pos[v][1] - py) < 0.05 for px, py in placed):
                 continue
-            ax.annotate(v, pos[v], fontsize=6, color=INK, zorder=4, xytext=(2, 4), textcoords="offset points",
+            ax.annotate(v, pos[v], fontsize=7, color=INK, zorder=4, xytext=(2, 4), textcoords="offset points",
                         bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.85))
             placed.append(tuple(pos[v]))
     handles = []
     for i, c in enumerate(order[:n_colored]):
         name = (comm_names or {}).get(c, f"community {c}")
-        handles.append(plt.Line2D([], [], marker="o", ls="", color=PALETTE[i], markersize=5, label=f"{name} ({sizes[c]})"))
-    handles.append(plt.Line2D([], [], marker="o", ls="", color=OTHER, markersize=5,
-                              label=f"other communities ({sum(sizes[c] for c in order[n_colored:])})"))
-    fig.legend(handles=handles, loc="center left", bbox_to_anchor=(0.68, 0.58), frameon=False, fontsize=7, labelspacing=1.0)
-    fig.text(0.71, 0.12, f"{g.number_of_nodes()} nodes / {g.number_of_edges():,} edges\nlayout on each node's top-{top_k} phi edges;\n"
-             f"all metrics use the full graph", fontsize=7, color=INK2, linespacing=1.5)
+        handles.append(plt.Line2D([], [], marker="o", ls="", color=PALETTE[i], markersize=6, label=f"{name}, {sizes[c]}"))
+    handles.append(plt.Line2D([], [], marker="o", ls="", color=OTHER, markersize=6,
+                              label=f"other communities, {sum(sizes[c] for c in order[n_colored:])}"))
+    fig.legend(handles=handles, loc="center left", bbox_to_anchor=(0.66, 0.6), frameon=False, fontsize=8, labelspacing=0.9,
+               title="community (anchor), nodes" if any("(" in (comm_names or {}).get(c, "") for c in order[:n_colored]) else None,
+               title_fontsize=8, alignment="left")
+    fig.text(0.685, 0.09, f"{g.number_of_nodes()} nodes / {g.number_of_edges():,} edges\nlayout on each node's top-{top_k} phi edges;\n"
+             f"all metrics use the full graph", fontsize=7.5, color=INK2, linespacing=1.5)
     _save(fig, path)
 
 
@@ -252,17 +254,27 @@ def bridge_stability_plot(st: pl.DataFrame, bridges: pl.DataFrame, path, names: 
 
 
 PAIR_ABBR = {"cardiometabolic": "CM", "cancer_hematologic": "H", "cancer_metastatic": "M", "mental_health": "MH"}
+PAIR_ORDER = ["CM", "H", "M", "MH"]  # fixed order inside a pair label and across pairs (matches the report's Table 1)
 
 
 def pair_abbr(pair: str) -> str:
-    a, b = pair.split("-")
-    return f"{PAIR_ABBR.get(a, a)}--{PAIR_ABBR.get(b, b)}"
+    a, b = (PAIR_ABBR.get(x, x) for x in pair.split("-"))
+    a, b = sorted((a, b), key=lambda s: PAIR_ORDER.index(s) if s in PAIR_ORDER else 99)
+    return f"{a}--{b}"
+
+
+def _pair_sort_key(pair: str):
+    a, b = pair_abbr(pair).split("--")
+    return (PAIR_ORDER.index(a), PAIR_ORDER.index(b))
 
 
 def bridge_stability_bars(st: pl.DataFrame, bridges: pl.DataFrame, path, names: dict, n_bootstrap: int):
     """Single-column bar chart: every category that passes the bridge screen, its share of patient resamples in
-    the pair's top-10 (data-driven version of the hand-picked chart in the first report draft)."""
-    passed = bridges.filter(pl.col("bridge_pass")).sort(["pair", "bridge_betweenness"], descending=[False, True])
+    the pair's top-10 (data-driven version of the hand-picked chart in the first report draft). `names` should be
+    the short names used in the report's table so the two agree."""
+    passed = bridges.filter(pl.col("bridge_pass")).sort("bridge_betweenness", descending=True)
+    passed = passed.sort(pl.col("pair").map_elements(lambda p: _pair_sort_key(p)[0] * 10 + _pair_sort_key(p)[1], return_dtype=pl.Int64),
+                         pl.col("bridge_betweenness"), descending=[False, True])
     share = {(r["pair"], r["category"]): r["share_in_top10"] for r in st.iter_rows(named=True)}
     rows = [(pair_abbr(r["pair"]), r["category"], names.get(r["category"], "")[:26], share.get((r["pair"], r["category"]), 0.0))
             for r in passed.iter_rows(named=True)]
