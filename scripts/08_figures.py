@@ -79,7 +79,7 @@ big = summary.filter(pl.col("size") >= min_size).sort("size", descending=True)
 viz.latex_table(
     big.select(pl.col("community").alias("id"), "size", pl.col("top_chapter").alias("top chapter"),
                pl.col("chapter_purity").alias("purity"), "density", pl.col("avg_clustering").alias("clustering"),
-               pl.col("internal_external_ratio").alias("int/ext"), pl.col("top5_codes").alias("top-5 by within-community strength")),
+               pl.col("internal_external_ratio").alias("int/ext"), pl.col("top5_codes").alias("top-5 members")),
     tbl / "communities.tex", "Leiden communities of the main graph (size $\\geq$ 5). Purity = share of the top ICD-10 chapter.",
     "tab:communities", {"purity": "{:.2f}", "density": "{:.2f}", "clustering": "{:.2f}", "int/ext": "{:.2f}"})
 
@@ -92,17 +92,24 @@ viz.latex_table(top_bt, tbl / "betweenness.tex", "Top 15 categories by phi-weigh
 
 rows = []
 pct_min = float(cfg["centrality"].get("bridge_null_percentile_min", 0.95))
+n_boot = int(cfg["stability"]["n_bootstrap"])
+stab_path = out / "stability_bridges.csv"
+stab = {(r["pair"], r["category"]): r["share_in_top10"] for r in pl.read_csv(stab_path).iter_rows(named=True)} if stab_path.exists() else {}
 for pair in bridges["pair"].unique().sort():
     s = bridges.filter(pl.col("pair") == pair)
     if "bridge_pass" in s.columns:
         s = s.filter(pl.col("bridge_pass"))
     for r in s.head(8).iter_rows(named=True):
-        rows.append({"pair": pair.replace("_", " "), "category": r["category"], "name": str(r["name"])[:34],
-                     "bt(A,B)": r["bridge_betweenness"], "null pct": r.get("bridge_null_percentile"),
-                     "share A": r["share_to_a"], "share B": r["share_to_b"], "degree": r["degree"]})
+        row = {"pair": pair.replace("_", " ").replace("-", " / "), "category": r["category"], "name": str(r["name"])[:30],
+               "bt(A,B)": r["bridge_betweenness"], "null pct": r.get("bridge_null_percentile"), "null z": r.get("bridge_null_z")}
+        if stab:  # bootstrap: resamples in which the category ranks in the pair's top-10
+            k = stab.get((pair, r["category"]))
+            row[f"top-10 in {n_boot} boots"] = "--" if k is None else f"{int(round(k * n_boot))}/{n_boot}"
+        rows.append(row)
 viz.latex_table(pl.DataFrame(rows), tbl / "bridges.tex",
-                f"Bridge categories per cluster pair that beat the rewired null (percentile $\\geq$ {pct_min}): betweenness restricted to shortest paths between the two clusters, null percentile, and the share of the node's phi-weight landing in each cluster.",
-                "tab:bridges", {"bt(A,B)": "{:.4f}", "null pct": "{:.2f}", "share A": "{:.2f}", "share B": "{:.2f}"})
+                f"Bridge categories per cluster pair that beat the rewired null (percentile $\\geq$ {pct_min}): betweenness restricted to shortest paths between the two clusters, null percentile, null z"
+                + (f", and the number of {n_boot} patient bootstraps in which the category stays in the pair's top-10." if stab else "."),
+                "tab:bridges", {"bt(A,B)": "{:.4f}", "null pct": "{:.2f}", "null z": "{:.1f}"})
 prec_path = out / "cluster_precedence.csv"
 if prec_path.exists():
     prec = pl.read_csv(prec_path)
@@ -114,12 +121,12 @@ if prec_path.exists():
                     "tab:precedence", {"median days A to B": "{:.0f}", "sign-test p": "{:.2g}"})
 
 sc = pl.read_csv(out / "subgroup_comparison.csv")
-viz.latex_table(sc.select("subgroup", pl.col("n_patients").alias("patients"), pl.col("n_edges").alias("edges"), "density",
-                          pl.col("n_isolates").alias("isolates"), pl.col("n_communities_ge5").alias("communities ($\\geq$5)"), pl.col("q_standard").alias("Q"),
-                          pl.col("ari_vs_main").alias("ARI vs main"), pl.col("ari_vs_main_non_isolates").alias("ARI (non-isolates)"),
-                          pl.col(f"top{k_top}_bt_overlap_vs_main").alias(f"top-{k_top} overlap")),
-                tbl / "subgroups.tex", "Subgroup graphs on the main node set, compared with the pooled graph. Smaller subgroups keep fewer edges at the fixed thresholds, so ARI is also given over non-isolated nodes.",
-                "tab:subgroups", {"density": "{:.3f}", "Q": "{:.3f}", "ARI vs main": "{:.2f}", "ARI (non-isolates)": "{:.2f}", f"top-{k_top} overlap": "{:.2f}"})
+viz.latex_table(sc.select("subgroup", pl.col("n_patients").alias("patients"), pl.col("n_edges").alias("edges"),
+                          pl.col("n_isolates").alias("isolates"), pl.col("avg_clustering").alias("clustering"),
+                          pl.col("ari_vs_main").alias("ARI"), pl.col("ari_vs_main_non_isolates").alias("ARI (non-isol.)"),
+                          pl.col(f"top{k_top}_bt_overlap_vs_main").alias(f"top-{k_top}")),
+                tbl / "subgroups.tex", f"Subgroup graphs on the main node set: edges kept at the fixed thresholds, isolates, clustering, ARI against the pooled partition (all nodes; non-isolated nodes) and top-{k_top} betweenness overlap with the pooled graph.",
+                "tab:subgroups", {"clustering": "{:.2f}", "ARI": "{:.2f}", "ARI (non-isol.)": "{:.2f}", f"top-{k_top}": "{:.2f}"})
 pw = pl.read_csv(out / "subgroup_pairwise.csv")
 viz.latex_table(pw.select("comparison", pl.col("ari").alias("ARI"), pl.col("ari_non_isolates").alias("ARI (non-isolates)"), pl.col(f"top{k_top}_bt_overlap").alias(f"top-{k_top} overlap"),
                           pl.col("edges_only_a").alias("edges only A"), pl.col("edges_only_b").alias("edges only B"), pl.col("edges_both").alias("shared"),

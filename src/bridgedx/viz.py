@@ -61,34 +61,36 @@ def community_layout(g, partition, path, top_k: int = 5, n_colored: int = 8, lab
     order += [c for c, _ in sizes.most_common() if c not in order]
     slot = {c: PALETTE[i] for i, c in enumerate(order[:n_colored])}
     pos = nx.spring_layout(h, weight=None, seed=seed, k=1.6 / np.sqrt(h.number_of_nodes()), iterations=300)
-    fig, ax = plt.subplots(figsize=(7.2, 6.2))
+    # compact full-width layout: drawing on the left 68%, legend and graph size on the right (no title; the caption says it)
+    fig = plt.figure(figsize=(7.1, 3.3))
+    ax = fig.add_axes([0.0, 0.01, 0.68, 0.98])
     ax.set_axis_off()
     ax.grid(False)
-    for u, v, d in h.edges(data=True):
-        same = partition[u] == partition[v]
-        ax.plot([pos[u][0], pos[v][0]], [pos[u][1], pos[v][1]], color=slot.get(partition[u], OTHER) if same else "#d2d1cc",
-                lw=0.35 + 1.2 * d["weight"], alpha=0.45 if same else 0.35, zorder=1, solid_capstyle="round")
+    nx.draw_networkx_edges(h, pos, ax=ax, width=0.22, alpha=0.22, edge_color="#8b969c")
     prev = np.array([float(g.nodes[v].get("prevalence", 0.01)) for v in h.nodes])
     cols = [slot.get(partition[v], OTHER) for v in h.nodes]
     xy = np.array([pos[v] for v in h.nodes])
-    ax.scatter(xy[:, 0], xy[:, 1], s=12 + 260 * prev, c=cols, edgecolors="white", linewidths=0.6, zorder=3)
-    wdeg = dict(g.degree(weight="weight"))
+    ax.scatter(xy[:, 0], xy[:, 1], s=5 + 95 * prev, c=cols, edgecolors="white", linewidths=0.25, zorder=3)
+    placed = []
     for c in order[:n_colored]:
-        members = [v for v in g.nodes if partition[v] == c]
+        members = [v for v in g.nodes if partition[v] == c and v in pos]
         inner = sorted(members, key=lambda v: -sum(g[v][u]["weight"] for u in g.neighbors(v) if partition[u] == c))
-        for j, v in enumerate(inner[:labels_per_comm]):
-            ax.annotate(v, pos[v], fontsize=6.5, color=INK, ha="center", va="center", zorder=4,
-                        xytext=(0, 7 if j % 2 == 0 else -7), textcoords="offset points",
-                        bbox=dict(boxstyle="round,pad=0.12", fc="white", ec="none", alpha=0.8))
+        for v in inner[:labels_per_comm]:
+            # skip a label that would sit on top of one already placed (layout units; the axes span about 2 units)
+            if any(abs(pos[v][0] - px) < 0.06 and abs(pos[v][1] - py) < 0.05 for px, py in placed):
+                continue
+            ax.annotate(v, pos[v], fontsize=6, color=INK, zorder=4, xytext=(2, 4), textcoords="offset points",
+                        bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.85))
+            placed.append(tuple(pos[v]))
     handles = []
     for i, c in enumerate(order[:n_colored]):
         name = (comm_names or {}).get(c, f"community {c}")
-        handles.append(plt.Line2D([], [], marker="o", ls="", color=PALETTE[i], markersize=6, label=f"{name} ({sizes[c]})"))
-    handles.append(plt.Line2D([], [], marker="o", ls="", color=OTHER, markersize=6,
-                              label=f"other ({sum(sizes[c] for c in order[n_colored:])})"))
-    ax.legend(handles=handles, loc="lower left", fontsize=6.5, frameon=False, ncol=2, bbox_to_anchor=(0.0, -0.08))
-    ax.set_title(f"Diagnosis co-occurrence graph, {g.number_of_nodes()} ICD-10 categories; layout on each node's top-{top_k} phi edges",
-                 fontsize=8, color=INK2, loc="left")
+        handles.append(plt.Line2D([], [], marker="o", ls="", color=PALETTE[i], markersize=5, label=f"{name} ({sizes[c]})"))
+    handles.append(plt.Line2D([], [], marker="o", ls="", color=OTHER, markersize=5,
+                              label=f"other communities ({sum(sizes[c] for c in order[n_colored:])})"))
+    fig.legend(handles=handles, loc="center left", bbox_to_anchor=(0.68, 0.58), frameon=False, fontsize=7, labelspacing=1.0)
+    fig.text(0.71, 0.12, f"{g.number_of_nodes()} nodes / {g.number_of_edges():,} edges\nlayout on each node's top-{top_k} phi edges;\n"
+             f"all metrics use the full graph", fontsize=7, color=INK2, linespacing=1.5)
     _save(fig, path)
 
 
