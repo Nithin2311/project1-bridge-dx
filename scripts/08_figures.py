@@ -54,11 +54,25 @@ for pair in sub_bridges["pair"].unique().sort():
     viz.subgroup_bridges_plot(sub_bridges, out / f"fig_bridges_{pair}.pdf", pair, groups, names)
 from bridgedx import subgroups as sg
 ranges = cfg["nodes"].get("sex_specific_ranges", [])
-for tag, a, b in [("sex", "female", "male"), ("age", "under65", "over65")]:
+panels = []
+for tag, a, b, title in [("sex", "female", "male", "(a) recorded sex"), ("age", "under65", "over65", "(b) age at first eligible diagnosis")]:
     pt = pl.read_csv(out / f"subgroup_edge_permutation_{tag}.csv")
     pt = pt.with_columns((pl.col("u").map_elements(lambda c: sg.in_ranges(c, ranges), return_dtype=pl.Boolean)
                           | pl.col("v").map_elements(lambda c: sg.in_ranges(c, ranges), return_dtype=pl.Boolean)).alias("sex_specific"))
-    viz.edge_diff_plot(pt, out / f"fig_edge_diff_{tag}.pdf", a, b, alpha)
+    panels.append((pt, a, b, title))
+viz.edge_diff_panels(panels, out / "fig_edge_diff.pdf", alpha,
+                     group_labels={"female": "female patients", "male": "male patients", "under65": "patients under 65", "over65": "patients 65 and over"})
+for stale in ("fig_edge_diff_sex", "fig_edge_diff_age"):  # replaced by the two-panel fig_edge_diff
+    for ext in (".pdf", ".png"):
+        (out / f"{stale}{ext}").unlink(missing_ok=True)
+
+# step 11 (patient bootstrap) is optional for this step; the figure is drawn only when its output exists
+stab_path = out / "stability_bridges.csv"
+if stab_path.exists():
+    viz.bridge_stability_plot(pl.read_csv(stab_path), bridges, out / "fig_bridge_stability.pdf", names,
+                              n_bootstrap=int(cfg["stability"]["n_bootstrap"]))
+else:
+    print("stability_bridges.csv not found (run 11_stability.py); skipping fig_bridge_stability")
 
 # tables
 big = summary.filter(pl.col("size") >= min_size).sort("size", descending=True)

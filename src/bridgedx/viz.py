@@ -103,8 +103,11 @@ def prevalence_residual_plot(df: pl.DataFrame, path, n_label: int = 8):
     ax.plot(x[o], fit[o], color=INK2, lw=1.2)
     rz = df["degree_residual_z"].to_numpy()
     idx = list(np.argsort(rz)[-n_label:]) + list(np.argsort(rz)[:4])
-    for i in idx:
-        ax.annotate(df["category"][int(i)], (x[i], y[i]), fontsize=6, color=INK, xytext=(3, 2), textcoords="offset points")
+    placed = []  # stagger labels of points that sit on top of each other
+    for i in sorted(idx, key=lambda j: (x[j], y[j])):
+        near = sum(1 for (px, py) in placed if abs(px - x[i]) < 0.02 and abs(py - y[i]) < 14)
+        ax.annotate(df["category"][int(i)], (x[i], y[i]), fontsize=6, color=INK, xytext=(3, 2 - 8 * near), textcoords="offset points")
+        placed.append((x[i], y[i]))
     r2 = df["degree_r2"][0]
     ax.set_xlabel("prevalence in cohort")
     ax.set_ylabel("degree (kept edges)")
@@ -120,14 +123,13 @@ def modularity_null_plot(q_null: np.ndarray, q_obs: float, path, resolution: flo
     ax.hist(q_null, bins=20, color=PALETTE[0], alpha=0.85, edgecolor="white", linewidth=0.5)
     ax.axvline(q_obs, color=PALETTE[1], lw=1.5)
     ax.set_xlim(min(lo, q_obs) - 0.01, max(hi, q_obs) + 0.01)
-    ins = ax.inset_axes([0.42, 0.45, 0.3, 0.45])
+    ins = ax.inset_axes([0.30, 0.40, 0.34, 0.45])
     ins.hist(q_null, bins=15, color=PALETTE[0], alpha=0.85, edgecolor="white", linewidth=0.4)
-    ins.set_title("null, zoomed", fontsize=6, color=INK2)
+    ins.set_title(f"null, zoomed: {q_null.mean():.3f} ± {q_null.std(ddof=1):.3f}", fontsize=6, color=INK2)
     ins.tick_params(labelsize=5)
     ins.grid(False)
-    ax.annotate(f"observed {q_obs:.3f}\n(z = {(q_obs - q_null.mean()) / q_null.std(ddof=1):.0f})", (q_obs, ax.get_ylim()[1] * 0.85),
+    ax.annotate(f"observed {q_obs:.3f}\n(z = {(q_obs - q_null.mean()) / q_null.std(ddof=1):.0f})", (q_obs, ax.get_ylim()[1] * 0.30),
                 fontsize=7, color=INK, ha="right", xytext=(-4, 0), textcoords="offset points")
-    ax.annotate(f"null {q_null.mean():.3f} ± {q_null.std(ddof=1):.3f}", ((lo + hi) / 2, ax.get_ylim()[1] * 0.85), fontsize=7, color=INK2, ha="left", xytext=(6, 0), textcoords="offset points")
     label = f"RB quality at γ = {resolution:g}" if resolution != 1.0 else "modularity Q"
     ax.set_xlabel(label + (f"   (standard Q of the partition = {q_standard:.3f})" if q_standard is not None and resolution != 1.0 else ""))
     ax.set_ylabel("rewired graphs")
@@ -166,25 +168,84 @@ def subgroup_bridges_plot(df: pl.DataFrame, path, pair: str, groups: list[str], 
     _save(fig, path)
 
 
-def edge_diff_plot(pt: pl.DataFrame, path, a: str, b: str, alpha: float = 0.05):
-    """phi in group a vs b for every main-graph edge; FDR-significant edges highlighted."""
+def _edge_diff_ax(ax, pt: pl.DataFrame, a: str, b: str, alpha: float, title: str, group_labels: dict):
+    """phi in group a vs b for every main-graph edge on one axis; FDR-significant edges highlighted,
+    the five largest non-reproductive differences labelled. Returns the three scatter handles."""
     sig = pt["p_fdr"] < alpha
     flag = pt["sex_specific"] if "sex_specific" in pt.columns else pl.Series([False] * pt.height)
-    fig, ax = plt.subplots(figsize=(3.3, 3.1))
-    ax.plot([-0.1, 1], [-0.1, 1], color=GRID, lw=1)
-    ax.scatter(pt["phi_b"].filter(~sig), pt["phi_a"].filter(~sig), s=5, color=OTHER, alpha=0.5, edgecolors="none")
-    ax.scatter(pt["phi_b"].filter(sig & flag), pt["phi_a"].filter(sig & flag), s=9, color=INK2, alpha=0.6, edgecolors="none",
-               label=f"significant, reproductive/sex-organ code ({int((sig & flag).sum())})")
-    ax.scatter(pt["phi_b"].filter(sig & ~flag), pt["phi_a"].filter(sig & ~flag), s=9, color=PALETTE[1], alpha=0.9, edgecolors="none",
-               label=f"significant, other ({int((sig & ~flag).sum())})")
+    ax.plot([-0.1, 1], [-0.1, 1], color=GRID, lw=1, zorder=0)
+    h0 = ax.scatter(pt["phi_b"].filter(~sig), pt["phi_a"].filter(~sig), s=4, color=OTHER, alpha=0.5, edgecolors="none",
+                    label="not significant", rasterized=True)
+    h1 = ax.scatter(pt["phi_b"].filter(sig & flag), pt["phi_a"].filter(sig & flag), s=11, color=INK2, alpha=0.7, edgecolors="none",
+                    label="significant, reproductive / sex-organ code")
+    h2 = ax.scatter(pt["phi_b"].filter(sig & ~flag), pt["phi_a"].filter(sig & ~flag), s=11, color=PALETTE[1], alpha=0.9, edgecolors="none",
+                    label="significant, other")
     lab = pt.filter(sig & ~flag).sort(pl.col("diff").abs(), descending=True).head(5)
     for i, r in enumerate(lab.iter_rows(named=True)):
         ax.annotate(f"{r['u']}-{r['v']}", (r["phi_b"], r["phi_a"]), fontsize=5.5, color=INK,
                     xytext=(4, 6 if i % 2 == 0 else -8), textcoords="offset points")
-    ax.legend(fontsize=5.5, frameon=False, loc="lower right")
-    ax.set_xlabel(f"phi in {b}")
-    ax.set_ylabel(f"phi in {a}")
-    ax.set_title(f"Edge weights {a} vs {b}; {int(sig.sum())} of {pt.height:,} edges differ at FDR {alpha}", fontsize=8, color=INK2, loc="left")
+    ax.set_xlim(-0.12, 1.0)
+    ax.set_ylim(-0.12, 1.0)
+    ax.set_xlabel(f"phi in {group_labels.get(b, b)}")
+    ax.set_ylabel(f"phi in {group_labels.get(a, a)}")
+    ax.set_title(f"{title}: {group_labels.get(a, a)} vs {group_labels.get(b, b)}", fontsize=7.5, color=INK2, loc="left")
+    ax.text(0.03, 0.97, f"{int(sig.sum())} of {pt.height:,} edges differ at FDR {alpha}\n"
+            f"{int((sig & flag).sum())} reproductive / sex-organ, {int((sig & ~flag).sum())} other",
+            transform=ax.transAxes, fontsize=6.5, color=INK2, va="top", ha="left")
+    return h0, h1, h2
+
+
+def edge_diff_panels(panels: list, path, alpha: float = 0.05, group_labels: dict | None = None):
+    """One full-width figure, one panel per subgroup split: panels = [(pt, a, b, title), ...].
+    Shared legend below; per-panel counts in the panel titles."""
+    group_labels = group_labels or {}
+    fig, axes = plt.subplots(1, len(panels), figsize=(3.4 * len(panels) + 0.3, 3.0))
+    axes = np.atleast_1d(axes)
+    handles = None
+    for ax, (pt, a, b, title) in zip(axes, panels):
+        handles = _edge_diff_ax(ax, pt, a, b, alpha, title, group_labels)
+    fig.legend(handles=list(handles), loc="lower center", ncol=3, frameon=False, fontsize=6.5, bbox_to_anchor=(0.5, -0.02))
+    fig.tight_layout(rect=[0, 0.06, 1, 1], w_pad=2.0)
+    _save(fig, path)
+
+
+def bridge_stability_plot(st: pl.DataFrame, bridges: pl.DataFrame, path, names: dict, n_bootstrap: int, top_n: int = 8):
+    """Patient-bootstrap stability of bridge rank, one panel per cluster pair: the top_n categories by the
+    share of resamples in which they rank in the pair's top-10 by restricted betweenness. Filled bars = the
+    category also passes the rewired null in the main graph (bridge_pass); hollow = it does not."""
+    pairs = sorted(st["pair"].unique().to_list())
+    ncol = 3
+    nrow = int(np.ceil(len(pairs) / ncol))
+    fig, axes = plt.subplots(nrow, ncol, figsize=(7.1, 1.75 * nrow + 0.5), squeeze=False)
+    for ax in axes.flat[len(pairs):]:
+        ax.set_axis_off()
+    for ax, pair in zip(axes.flat, pairs):
+        s = st.filter(pl.col("pair") == pair).sort(["share_in_top10", "median_rank"], descending=[True, False]).head(top_n)
+        passed = set(bridges.filter((pl.col("pair") == pair) & pl.col("bridge_pass"))["category"].to_list())
+        cats = s["category"].to_list()
+        vals = s["share_in_top10"].to_numpy()
+        ys = np.arange(len(cats))
+        for y, c, v in zip(ys, cats, vals):
+            ax.barh(y, v, height=0.62, color=PALETTE[0] if c in passed else "white",
+                    edgecolor=PALETTE[0], linewidth=0.8, zorder=3)
+            ax.annotate(f"{int(np.rint(v * n_bootstrap))}/{n_bootstrap}", (v, y), fontsize=5.5, color=INK2,
+                        xytext=(2, 0), textcoords="offset points", va="center")
+        ax.set_yticks(ys)
+        ax.set_yticklabels([f"{c}  {names.get(c, '')[:20]}" for c in cats], fontsize=5.8)
+        ax.invert_yaxis()
+        ax.set_xlim(0, 1.22)
+        ax.set_xticks([0, 0.5, 1.0])
+        ax.tick_params(axis="x", labelsize=6)
+        ax.tick_params(axis="y", length=0)
+        ax.grid(axis="y", visible=False)
+        ax.spines["left"].set_visible(False)
+        ax.set_title(pair.replace("_", " ").replace("-", " vs "), fontsize=7.5, color=INK2, loc="left")
+    handles = [plt.Rectangle((0, 0), 1, 1, fc=PALETTE[0], ec=PALETTE[0], lw=0.8, label="passes the rewired null in the main graph"),
+               plt.Rectangle((0, 0), 1, 1, fc="white", ec=PALETTE[0], lw=0.8, label="does not pass the rewired null")]
+    fig.legend(handles=handles, loc="lower center", ncol=2, frameon=False, fontsize=6.5, bbox_to_anchor=(0.5, -0.01))
+    fig.suptitle(f"Share of {n_bootstrap} patient resamples in which the category ranks in the pair's top-10 bridges",
+                 fontsize=8, color=INK2, x=0.01, ha="left")
+    fig.tight_layout(rect=[0, 0.05, 1, 0.95], w_pad=1.6, h_pad=1.2)
     _save(fig, path)
 
 

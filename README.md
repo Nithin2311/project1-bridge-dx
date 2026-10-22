@@ -18,23 +18,22 @@ docs/DATA.md              where the data lives and how the loader finds it
 src/bridgedx/             library: data -> cohort -> edges -> graph -> communities/centrality/subgroups -> viz
 scripts/NN_*.py           pipeline steps, run in order; each writes to outputs/
 outputs/                  node list, edge list, metrics tables, figures (gitignored except .gitkeep)
-report/                   local report files; shared report is maintained in Overleaf
+report/                   placeholder; the report is a separate repo (see below)
 tests/                    small unit tests on synthetic data
 ```
 
-## Report and Overleaf
+## Report
 
-The shared report is maintained in Overleaf. Files in `report/` are local working copies and may differ
-from the current Overleaf version. Use Overleaf for report edits and review.
-
-The report figure generator, `report/make_report_figures.py`, reads existing aggregate results from
-`outputs/` and writes PDF and PNG figures to `report/figures/`. Run it locally from the repository root:
+The report is its own repo, `project1-bridge-dx-report` (IEEE conference layout, `main.tex`, built with `make`).
+Figures and LaTeX tables are **not** edited there: `scripts/08_figures.py` writes `outputs/fig_*.pdf` and
+`outputs/tables/*.tex`, and the report repo's `sync_from_pipeline.sh` copies them in. To refresh after a rerun:
 
 ```bash
-uv run python report/make_report_figures.py
+uv run python scripts/08_figures.py            # figures + tables into outputs/ (needs steps 03-07; 11 for the stability figure)
+cd ../project1-bridge-dx-report && ./sync_from_pipeline.sh && make
 ```
 
-Upload updated figures to Overleaf when the analysis results change. The generator does not rerun the analysis.
+Everything synced is aggregate (diagnosis-category level); no patient-level content leaves `outputs/`.
 
 ## Setup
 
