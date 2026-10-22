@@ -251,6 +251,64 @@ def bridge_stability_plot(st: pl.DataFrame, bridges: pl.DataFrame, path, names: 
     _save(fig, path)
 
 
+PAIR_ABBR = {"cardiometabolic": "CM", "cancer_hematologic": "H", "cancer_metastatic": "M", "mental_health": "MH"}
+
+
+def pair_abbr(pair: str) -> str:
+    a, b = pair.split("-")
+    return f"{PAIR_ABBR.get(a, a)}--{PAIR_ABBR.get(b, b)}"
+
+
+def bridge_stability_bars(st: pl.DataFrame, bridges: pl.DataFrame, path, names: dict, n_bootstrap: int):
+    """Single-column bar chart: every category that passes the bridge screen, its share of patient resamples in
+    the pair's top-10 (data-driven version of the hand-picked chart in the first report draft)."""
+    passed = bridges.filter(pl.col("bridge_pass")).sort(["pair", "bridge_betweenness"], descending=[False, True])
+    share = {(r["pair"], r["category"]): r["share_in_top10"] for r in st.iter_rows(named=True)}
+    rows = [(pair_abbr(r["pair"]), r["category"], names.get(r["category"], "")[:26], share.get((r["pair"], r["category"]), 0.0))
+            for r in passed.iter_rows(named=True)]
+    pairs = sorted({r[0] for r in rows})
+    colors = {p: PALETTE[i % len(PALETTE)] for i, p in enumerate(pairs)}
+    fig, ax = plt.subplots(figsize=(3.35, 0.15 * len(rows) + 0.6))
+    for i, (p, c, name, v) in enumerate(rows):
+        ax.barh(i, v, color=colors[p], height=0.62, zorder=3)
+        ax.text(v + 0.02, i, f"{int(np.rint(v * n_bootstrap))}/{n_bootstrap}", va="center", fontsize=6, color=INK2)
+    ax.set_yticks(range(len(rows)))
+    ax.set_yticklabels([f"{p}  {c}  {name[:22]}" for p, c, name, _ in rows], fontsize=6)
+    ax.invert_yaxis()
+    ax.set_xlim(0, 1.16)
+    ax.set_xticks([0, 0.5, 1.0])
+    ax.set_xticklabels(["0", "0.5", "1.0"], fontsize=7)
+    ax.set_xlabel("fraction of resamples in the pair's top ten", fontsize=7)
+    ax.grid(axis="y", visible=False)
+    ax.spines["left"].set_visible(False)
+    ax.tick_params(axis="y", length=0)
+    _save(fig, path)
+
+
+def compact_tables(bridges: pl.DataFrame, st: pl.DataFrame, sc: pl.DataFrame, names: dict, n_bootstrap: int, tbl):
+    """Two single-column tables in the report's compact style: screened bridges with null percentile and bootstrap
+    stability; subgroup graphs with patients, edges, isolates and clustering."""
+    share = {(r["pair"], r["category"]): r["share_in_top10"] for r in st.iter_rows(named=True)}
+    lines = ["\\begin{table}[t]", "\\centering\\small",
+             f"\\caption{{Screened bridge candidates. CM: cardiometabolic; H: haematology-associated; M: metastatic cancer-associated; MH: mental health. Null pct.\\ = share of 100 rewired scores below the observation; stability = fraction of {n_bootstrap} patient resamples in the pair's top ten.}}",
+             "\\label{tab:bridges}", "\\setlength{\\tabcolsep}{3pt}", "\\begin{tabular}{@{}lp{1.25in}rr@{}}", "\\toprule",
+             "Pair / code & Category & Null pct. & Stability\\\\", "\\midrule"]
+    for r in bridges.filter(pl.col("bridge_pass")).sort(["pair", "bridge_betweenness"], descending=[False, True]).iter_rows(named=True):
+        nm = names.get(r["category"], "").replace("&", "\\&")[:34]
+        lines.append(f"{pair_abbr(r['pair'])} / {r['category']} & {nm} & {r['bridge_null_percentile']:.2f} & {share.get((r['pair'], r['category']), 0.0):.2f}\\\\")
+    lines += ["\\bottomrule", "\\end{tabular}", "\\end{table}", ""]
+    (tbl / "bridges_compact.tex").write_text("\n".join(lines))
+    lab = {"female": "Female", "male": "Male", "under65": "Age $<65$", "over65": "Age $\\geq65$"}
+    lines = ["\\begin{table}[t]", "\\centering\\small",
+             "\\caption{Subgroup networks on the fixed node set. Ages are measured at first eligible diagnosis; clustering is unweighted; ARI is against the pooled partition over nodes isolated in neither graph.}",
+             "\\label{tab:groups}", "\\begin{tabular}{lrrrrr}", "\\toprule",
+             "Group & Patients & Edges & Isolates & Clustering & ARI\\\\", "\\midrule"]
+    for r in sc.iter_rows(named=True):
+        lines.append(f"{lab.get(r['subgroup'], r['subgroup'])} & {r['n_patients']:,} & {r['n_edges']:,} & {r['n_isolates']} & {r['avg_clustering']:.3f} & {r['ari_vs_main_non_isolates']:.2f}\\\\")
+    lines += ["\\bottomrule", "\\end{tabular}", "\\end{table}", ""]
+    (tbl / "subgroups_compact.tex").write_text("\n".join(lines))
+
+
 def latex_table(df: pl.DataFrame, path, caption: str, label: str, col_fmt: dict | None = None, escape: bool = True):
     """Minimal booktabs table writer; numeric formats via col_fmt {col: '{:.2f}'}."""
     col_fmt = col_fmt or {}

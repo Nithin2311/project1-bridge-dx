@@ -69,8 +69,11 @@ for stale in ("fig_edge_diff_sex", "fig_edge_diff_age"):  # replaced by the two-
 # step 11 (patient bootstrap) is optional for this step; the figure is drawn only when its output exists
 stab_path = out / "stability_bridges.csv"
 if stab_path.exists():
-    viz.bridge_stability_plot(pl.read_csv(stab_path), bridges, out / "fig_bridge_stability.pdf", names,
-                              n_bootstrap=int(cfg["stability"]["n_bootstrap"]))
+    stab_df = pl.read_csv(stab_path)
+    n_boot_ = int(cfg["stability"]["n_bootstrap"])
+    viz.bridge_stability_plot(stab_df, bridges, out / "fig_bridge_stability.pdf", names, n_bootstrap=n_boot_)
+    viz.bridge_stability_bars(stab_df, bridges, out / "fig_bridge_stability_bars.pdf", names, n_bootstrap=n_boot_)
+    viz.compact_tables(bridges, stab_df, pl.read_csv(out / "subgroup_comparison.csv"), names, n_boot_, tbl)
 else:
     print("stability_bridges.csv not found (run 11_stability.py); skipping fig_bridge_stability")
 
