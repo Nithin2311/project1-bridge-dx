@@ -61,34 +61,38 @@ def community_layout(g, partition, path, top_k: int = 5, n_colored: int = 8, lab
     order += [c for c, _ in sizes.most_common() if c not in order]
     slot = {c: PALETTE[i] for i, c in enumerate(order[:n_colored])}
     pos = nx.spring_layout(h, weight=None, seed=seed, k=1.6 / np.sqrt(h.number_of_nodes()), iterations=300)
-    fig, ax = plt.subplots(figsize=(7.2, 6.2))
+    # compact full-width layout: drawing on the left 68%, legend and graph size on the right (no title; the caption says it)
+    fig = plt.figure(figsize=(7.1, 3.5))
+    ax = fig.add_axes([0.0, 0.01, 0.66, 0.98])
     ax.set_axis_off()
     ax.grid(False)
-    for u, v, d in h.edges(data=True):
-        same = partition[u] == partition[v]
-        ax.plot([pos[u][0], pos[v][0]], [pos[u][1], pos[v][1]], color=slot.get(partition[u], OTHER) if same else "#d2d1cc",
-                lw=0.35 + 1.2 * d["weight"], alpha=0.45 if same else 0.35, zorder=1, solid_capstyle="round")
+    nx.draw_networkx_edges(h, pos, ax=ax, width=0.22, alpha=0.22, edge_color="#8b969c")
     prev = np.array([float(g.nodes[v].get("prevalence", 0.01)) for v in h.nodes])
     cols = [slot.get(partition[v], OTHER) for v in h.nodes]
     xy = np.array([pos[v] for v in h.nodes])
-    ax.scatter(xy[:, 0], xy[:, 1], s=12 + 260 * prev, c=cols, edgecolors="white", linewidths=0.6, zorder=3)
-    wdeg = dict(g.degree(weight="weight"))
+    ax.scatter(xy[:, 0], xy[:, 1], s=5 + 95 * prev, c=cols, edgecolors="white", linewidths=0.25, zorder=3)
+    placed = []
     for c in order[:n_colored]:
-        members = [v for v in g.nodes if partition[v] == c]
+        members = [v for v in g.nodes if partition[v] == c and v in pos]
         inner = sorted(members, key=lambda v: -sum(g[v][u]["weight"] for u in g.neighbors(v) if partition[u] == c))
-        for j, v in enumerate(inner[:labels_per_comm]):
-            ax.annotate(v, pos[v], fontsize=6.5, color=INK, ha="center", va="center", zorder=4,
-                        xytext=(0, 7 if j % 2 == 0 else -7), textcoords="offset points",
-                        bbox=dict(boxstyle="round,pad=0.12", fc="white", ec="none", alpha=0.8))
+        for v in inner[:labels_per_comm]:
+            # skip a label that would sit on top of one already placed (layout units; the axes span about 2 units)
+            if any(abs(pos[v][0] - px) < 0.06 and abs(pos[v][1] - py) < 0.05 for px, py in placed):
+                continue
+            ax.annotate(v, pos[v], fontsize=7, color=INK, zorder=4, xytext=(2, 4), textcoords="offset points",
+                        bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.85))
+            placed.append(tuple(pos[v]))
     handles = []
     for i, c in enumerate(order[:n_colored]):
         name = (comm_names or {}).get(c, f"community {c}")
-        handles.append(plt.Line2D([], [], marker="o", ls="", color=PALETTE[i], markersize=6, label=f"{name} ({sizes[c]})"))
+        handles.append(plt.Line2D([], [], marker="o", ls="", color=PALETTE[i], markersize=6, label=f"{name}, {sizes[c]}"))
     handles.append(plt.Line2D([], [], marker="o", ls="", color=OTHER, markersize=6,
-                              label=f"other ({sum(sizes[c] for c in order[n_colored:])})"))
-    ax.legend(handles=handles, loc="lower left", fontsize=6.5, frameon=False, ncol=2, bbox_to_anchor=(0.0, -0.08))
-    ax.set_title(f"Diagnosis co-occurrence graph, {g.number_of_nodes()} ICD-10 categories; layout on each node's top-{top_k} phi edges",
-                 fontsize=8, color=INK2, loc="left")
+                              label=f"other communities, {sum(sizes[c] for c in order[n_colored:])}"))
+    fig.legend(handles=handles, loc="center left", bbox_to_anchor=(0.66, 0.6), frameon=False, fontsize=8, labelspacing=0.9,
+               title="community (anchor), nodes" if any("(" in (comm_names or {}).get(c, "") for c in order[:n_colored]) else None,
+               title_fontsize=8, alignment="left")
+    fig.text(0.685, 0.09, f"{g.number_of_nodes()} nodes / {g.number_of_edges():,} edges\nlayout on each node's top-{top_k} phi edges;\n"
+             f"all metrics use the full graph", fontsize=7.5, color=INK2, linespacing=1.5)
     _save(fig, path)
 
 
@@ -103,8 +107,11 @@ def prevalence_residual_plot(df: pl.DataFrame, path, n_label: int = 8):
     ax.plot(x[o], fit[o], color=INK2, lw=1.2)
     rz = df["degree_residual_z"].to_numpy()
     idx = list(np.argsort(rz)[-n_label:]) + list(np.argsort(rz)[:4])
-    for i in idx:
-        ax.annotate(df["category"][int(i)], (x[i], y[i]), fontsize=6, color=INK, xytext=(3, 2), textcoords="offset points")
+    placed = []  # stagger labels of points that sit on top of each other
+    for i in sorted(idx, key=lambda j: (x[j], y[j])):
+        near = sum(1 for (px, py) in placed if abs(px - x[i]) < 0.02 and abs(py - y[i]) < 14)
+        ax.annotate(df["category"][int(i)], (x[i], y[i]), fontsize=6, color=INK, xytext=(3, 2 - 8 * near), textcoords="offset points")
+        placed.append((x[i], y[i]))
     r2 = df["degree_r2"][0]
     ax.set_xlabel("prevalence in cohort")
     ax.set_ylabel("degree (kept edges)")
@@ -120,14 +127,13 @@ def modularity_null_plot(q_null: np.ndarray, q_obs: float, path, resolution: flo
     ax.hist(q_null, bins=20, color=PALETTE[0], alpha=0.85, edgecolor="white", linewidth=0.5)
     ax.axvline(q_obs, color=PALETTE[1], lw=1.5)
     ax.set_xlim(min(lo, q_obs) - 0.01, max(hi, q_obs) + 0.01)
-    ins = ax.inset_axes([0.42, 0.45, 0.3, 0.45])
+    ins = ax.inset_axes([0.30, 0.40, 0.34, 0.45])
     ins.hist(q_null, bins=15, color=PALETTE[0], alpha=0.85, edgecolor="white", linewidth=0.4)
-    ins.set_title("null, zoomed", fontsize=6, color=INK2)
+    ins.set_title(f"null, zoomed: {q_null.mean():.3f} ± {q_null.std(ddof=1):.3f}", fontsize=6, color=INK2)
     ins.tick_params(labelsize=5)
     ins.grid(False)
-    ax.annotate(f"observed {q_obs:.3f}\n(z = {(q_obs - q_null.mean()) / q_null.std(ddof=1):.0f})", (q_obs, ax.get_ylim()[1] * 0.85),
+    ax.annotate(f"observed {q_obs:.3f}\n(z = {(q_obs - q_null.mean()) / q_null.std(ddof=1):.0f})", (q_obs, ax.get_ylim()[1] * 0.30),
                 fontsize=7, color=INK, ha="right", xytext=(-4, 0), textcoords="offset points")
-    ax.annotate(f"null {q_null.mean():.3f} ± {q_null.std(ddof=1):.3f}", ((lo + hi) / 2, ax.get_ylim()[1] * 0.85), fontsize=7, color=INK2, ha="left", xytext=(6, 0), textcoords="offset points")
     label = f"RB quality at γ = {resolution:g}" if resolution != 1.0 else "modularity Q"
     ax.set_xlabel(label + (f"   (standard Q of the partition = {q_standard:.3f})" if q_standard is not None and resolution != 1.0 else ""))
     ax.set_ylabel("rewired graphs")
@@ -145,7 +151,7 @@ def subgroup_bridges_plot(df: pl.DataFrame, path, pair: str, groups: list[str], 
         ranks[gname] = {c: i + 1 for i, c in enumerate(s["category"].to_list())}
     rows = sorted({c for gname in groups for c, r in ranks[gname].items() if r <= top_n},
                   key=lambda c: sum(min(ranks[gname].get(c, 99), 30) for gname in groups))
-    fig, ax = plt.subplots(figsize=(3.6, 0.22 * len(rows) + 0.9))
+    fig, ax = plt.subplots(figsize=(3.6, 0.19 * len(rows) + 0.8))
     for j, gname in enumerate(groups):
         for i, c in enumerate(rows):
             r = ranks[gname].get(c)
@@ -166,26 +172,153 @@ def subgroup_bridges_plot(df: pl.DataFrame, path, pair: str, groups: list[str], 
     _save(fig, path)
 
 
-def edge_diff_plot(pt: pl.DataFrame, path, a: str, b: str, alpha: float = 0.05):
-    """phi in group a vs b for every main-graph edge; FDR-significant edges highlighted."""
+def _edge_diff_ax(ax, pt: pl.DataFrame, a: str, b: str, alpha: float, title: str, group_labels: dict):
+    """phi in group a vs b for every main-graph edge on one axis; FDR-significant edges highlighted,
+    the five largest non-reproductive differences labelled. Returns the three scatter handles."""
     sig = pt["p_fdr"] < alpha
     flag = pt["sex_specific"] if "sex_specific" in pt.columns else pl.Series([False] * pt.height)
-    fig, ax = plt.subplots(figsize=(3.3, 3.1))
-    ax.plot([-0.1, 1], [-0.1, 1], color=GRID, lw=1)
-    ax.scatter(pt["phi_b"].filter(~sig), pt["phi_a"].filter(~sig), s=5, color=OTHER, alpha=0.5, edgecolors="none")
-    ax.scatter(pt["phi_b"].filter(sig & flag), pt["phi_a"].filter(sig & flag), s=9, color=INK2, alpha=0.6, edgecolors="none",
-               label=f"significant, reproductive/sex-organ code ({int((sig & flag).sum())})")
-    ax.scatter(pt["phi_b"].filter(sig & ~flag), pt["phi_a"].filter(sig & ~flag), s=9, color=PALETTE[1], alpha=0.9, edgecolors="none",
-               label=f"significant, other ({int((sig & ~flag).sum())})")
+    ax.plot([-0.1, 1], [-0.1, 1], color=GRID, lw=1, zorder=0)
+    h0 = ax.scatter(pt["phi_b"].filter(~sig), pt["phi_a"].filter(~sig), s=4, color=OTHER, alpha=0.5, edgecolors="none",
+                    label="not significant", rasterized=True)
+    h1 = ax.scatter(pt["phi_b"].filter(sig & flag), pt["phi_a"].filter(sig & flag), s=11, color=INK2, alpha=0.7, edgecolors="none",
+                    label="significant, reproductive / sex-organ code")
+    h2 = ax.scatter(pt["phi_b"].filter(sig & ~flag), pt["phi_a"].filter(sig & ~flag), s=11, color=PALETTE[1], alpha=0.9, edgecolors="none",
+                    label="significant, other")
     lab = pt.filter(sig & ~flag).sort(pl.col("diff").abs(), descending=True).head(5)
     for i, r in enumerate(lab.iter_rows(named=True)):
         ax.annotate(f"{r['u']}-{r['v']}", (r["phi_b"], r["phi_a"]), fontsize=5.5, color=INK,
                     xytext=(4, 6 if i % 2 == 0 else -8), textcoords="offset points")
-    ax.legend(fontsize=5.5, frameon=False, loc="lower right")
-    ax.set_xlabel(f"phi in {b}")
-    ax.set_ylabel(f"phi in {a}")
-    ax.set_title(f"Edge weights {a} vs {b}; {int(sig.sum())} of {pt.height:,} edges differ at FDR {alpha}", fontsize=8, color=INK2, loc="left")
+    ax.set_xlim(-0.12, 1.0)
+    ax.set_ylim(-0.12, 1.0)
+    ax.set_xlabel(f"phi in {group_labels.get(b, b)}")
+    ax.set_ylabel(f"phi in {group_labels.get(a, a)}")
+    ax.set_title(f"{title}: {group_labels.get(a, a)} vs {group_labels.get(b, b)}", fontsize=7.5, color=INK2, loc="left")
+    ax.text(0.03, 0.97, f"{int(sig.sum())} of {pt.height:,} edges differ at FDR {alpha}\n"
+            f"{int((sig & flag).sum())} reproductive / sex-organ, {int((sig & ~flag).sum())} other",
+            transform=ax.transAxes, fontsize=6.5, color=INK2, va="top", ha="left")
+    return h0, h1, h2
+
+
+def edge_diff_panels(panels: list, path, alpha: float = 0.05, group_labels: dict | None = None):
+    """One full-width figure, one panel per subgroup split: panels = [(pt, a, b, title), ...].
+    Shared legend below; per-panel counts in the panel titles."""
+    group_labels = group_labels or {}
+    fig, axes = plt.subplots(1, len(panels), figsize=(3.4 * len(panels) + 0.3, 3.0))
+    axes = np.atleast_1d(axes)
+    handles = None
+    for ax, (pt, a, b, title) in zip(axes, panels):
+        handles = _edge_diff_ax(ax, pt, a, b, alpha, title, group_labels)
+    fig.legend(handles=list(handles), loc="lower center", ncol=3, frameon=False, fontsize=6.5, bbox_to_anchor=(0.5, -0.02))
+    fig.tight_layout(rect=[0, 0.06, 1, 1], w_pad=2.0)
     _save(fig, path)
+
+
+def bridge_stability_plot(st: pl.DataFrame, bridges: pl.DataFrame, path, names: dict, n_bootstrap: int, top_n: int = 8):
+    """Patient-bootstrap stability of bridge rank, one panel per cluster pair: the top_n categories by the
+    share of resamples in which they rank in the pair's top-10 by restricted betweenness. Filled bars = the
+    category also passes the rewired null in the main graph (bridge_pass); hollow = it does not."""
+    pairs = sorted(st["pair"].unique().to_list())
+    ncol = 3
+    nrow = int(np.ceil(len(pairs) / ncol))
+    fig, axes = plt.subplots(nrow, ncol, figsize=(7.1, 1.75 * nrow + 0.5), squeeze=False)
+    for ax in axes.flat[len(pairs):]:
+        ax.set_axis_off()
+    for ax, pair in zip(axes.flat, pairs):
+        s = st.filter(pl.col("pair") == pair).sort(["share_in_top10", "median_rank"], descending=[True, False]).head(top_n)
+        passed = set(bridges.filter((pl.col("pair") == pair) & pl.col("bridge_pass"))["category"].to_list())
+        cats = s["category"].to_list()
+        vals = s["share_in_top10"].to_numpy()
+        ys = np.arange(len(cats))
+        for y, c, v in zip(ys, cats, vals):
+            ax.barh(y, v, height=0.62, color=PALETTE[0] if c in passed else "white",
+                    edgecolor=PALETTE[0], linewidth=0.8, zorder=3)
+            ax.annotate(f"{int(np.rint(v * n_bootstrap))}/{n_bootstrap}", (v, y), fontsize=6, color=INK2,
+                        xytext=(2, 0), textcoords="offset points", va="center")
+        ax.set_yticks(ys)
+        ax.set_yticklabels([f"{c}  {names.get(c, '')[:20]}" for c in cats], fontsize=6.2)
+        ax.invert_yaxis()
+        ax.set_xlim(0, 1.22)
+        ax.set_xticks([0, 0.5, 1.0])
+        ax.tick_params(axis="x", labelsize=6)
+        ax.tick_params(axis="y", length=0)
+        ax.grid(axis="y", visible=False)
+        ax.spines["left"].set_visible(False)
+        ax.set_title(pair.replace("_", " ").replace("-", " vs "), fontsize=7.5, color=INK2, loc="left")
+    handles = [plt.Rectangle((0, 0), 1, 1, fc=PALETTE[0], ec=PALETTE[0], lw=0.8, label="passes the rewired null in the main graph"),
+               plt.Rectangle((0, 0), 1, 1, fc="white", ec=PALETTE[0], lw=0.8, label="does not pass the rewired null")]
+    fig.legend(handles=handles, loc="lower center", ncol=2, frameon=False, fontsize=6.5, bbox_to_anchor=(0.5, -0.01))
+    fig.suptitle(f"Share of {n_bootstrap} patient resamples in which the category ranks in the pair's top-10 bridges",
+                 fontsize=8, color=INK2, x=0.01, ha="left")
+    fig.tight_layout(rect=[0, 0.05, 1, 0.95], w_pad=1.6, h_pad=1.2)
+    _save(fig, path)
+
+
+PAIR_ABBR = {"cardiometabolic": "CM", "cancer_hematologic": "H", "cancer_metastatic": "M", "mental_health": "MH"}
+PAIR_ORDER = ["CM", "H", "M", "MH"]  # fixed order inside a pair label and across pairs (matches the report's Table 1)
+
+
+def pair_abbr(pair: str) -> str:
+    a, b = (PAIR_ABBR.get(x, x) for x in pair.split("-"))
+    a, b = sorted((a, b), key=lambda s: PAIR_ORDER.index(s) if s in PAIR_ORDER else 99)
+    return f"{a}--{b}"
+
+
+def _pair_sort_key(pair: str):
+    a, b = pair_abbr(pair).split("--")
+    return (PAIR_ORDER.index(a), PAIR_ORDER.index(b))
+
+
+def bridge_stability_bars(st: pl.DataFrame, bridges: pl.DataFrame, path, names: dict, n_bootstrap: int):
+    """Single-column bar chart: every category that passes the bridge screen, its share of patient resamples in
+    the pair's top-10 (data-driven version of the hand-picked chart in the first report draft). `names` should be
+    the short names used in the report's table so the two agree."""
+    passed = bridges.filter(pl.col("bridge_pass")).sort("bridge_betweenness", descending=True)
+    passed = passed.sort(pl.col("pair").map_elements(lambda p: _pair_sort_key(p)[0] * 10 + _pair_sort_key(p)[1], return_dtype=pl.Int64),
+                         pl.col("bridge_betweenness"), descending=[False, True])
+    share = {(r["pair"], r["category"]): r["share_in_top10"] for r in st.iter_rows(named=True)}
+    rows = [(pair_abbr(r["pair"]), r["category"], names.get(r["category"], "")[:26], share.get((r["pair"], r["category"]), 0.0))
+            for r in passed.iter_rows(named=True)]
+    pairs = sorted({r[0] for r in rows})
+    colors = {p: PALETTE[i % len(PALETTE)] for i, p in enumerate(pairs)}
+    fig, ax = plt.subplots(figsize=(3.35, 0.15 * len(rows) + 0.6))
+    for i, (p, c, name, v) in enumerate(rows):
+        ax.barh(i, v, color=colors[p], height=0.62, zorder=3)
+        ax.text(v + 0.02, i, f"{int(np.rint(v * n_bootstrap))}/{n_bootstrap}", va="center", fontsize=6, color=INK2)
+    ax.set_yticks(range(len(rows)))
+    ax.set_yticklabels([f"{p}  {c}  {name[:22]}" for p, c, name, _ in rows], fontsize=6)
+    ax.invert_yaxis()
+    ax.set_xlim(0, 1.16)
+    ax.set_xticks([0, 0.5, 1.0])
+    ax.set_xticklabels(["0", "0.5", "1.0"], fontsize=7)
+    ax.set_xlabel("fraction of resamples in the pair's top ten", fontsize=7)
+    ax.grid(axis="y", visible=False)
+    ax.spines["left"].set_visible(False)
+    ax.tick_params(axis="y", length=0)
+    _save(fig, path)
+
+
+def compact_tables(bridges: pl.DataFrame, st: pl.DataFrame, sc: pl.DataFrame, names: dict, n_bootstrap: int, tbl):
+    """Two single-column tables in the report's compact style: screened bridges with null percentile and bootstrap
+    stability; subgroup graphs with patients, edges, isolates and clustering."""
+    share = {(r["pair"], r["category"]): r["share_in_top10"] for r in st.iter_rows(named=True)}
+    lines = ["\\begin{table}[t]", "\\centering\\small",
+             f"\\caption{{Screened bridge candidates. CM: cardiometabolic; H: haematology-associated; M: metastatic cancer-associated; MH: mental health. Null pct.\\ = share of 100 rewired scores below the observation; stability = fraction of {n_bootstrap} patient resamples in the pair's top ten.}}",
+             "\\label{tab:bridges}", "\\setlength{\\tabcolsep}{3pt}", "\\begin{tabular}{@{}lp{1.25in}rr@{}}", "\\toprule",
+             "Pair / code & Category & Null pct. & Stability\\\\", "\\midrule"]
+    for r in bridges.filter(pl.col("bridge_pass")).sort(["pair", "bridge_betweenness"], descending=[False, True]).iter_rows(named=True):
+        nm = names.get(r["category"], "").replace("&", "\\&")[:34]
+        lines.append(f"{pair_abbr(r['pair'])} / {r['category']} & {nm} & {r['bridge_null_percentile']:.2f} & {share.get((r['pair'], r['category']), 0.0):.2f}\\\\")
+    lines += ["\\bottomrule", "\\end{tabular}", "\\end{table}", ""]
+    (tbl / "bridges_compact.tex").write_text("\n".join(lines))
+    lab = {"female": "Female", "male": "Male", "under65": "Age $<65$", "over65": "Age $\\geq65$"}
+    lines = ["\\begin{table}[t]", "\\centering\\small",
+             "\\caption{Subgroup networks on the fixed node set. Ages are measured at first eligible diagnosis; clustering is unweighted; ARI is against the pooled partition over nodes isolated in neither graph.}",
+             "\\label{tab:groups}", "\\begin{tabular}{lrrrrr}", "\\toprule",
+             "Group & Patients & Edges & Isolates & Clustering & ARI\\\\", "\\midrule"]
+    for r in sc.iter_rows(named=True):
+        lines.append(f"{lab.get(r['subgroup'], r['subgroup'])} & {r['n_patients']:,} & {r['n_edges']:,} & {r['n_isolates']} & {r['avg_clustering']:.3f} & {r['ari_vs_main_non_isolates']:.2f}\\\\")
+    lines += ["\\bottomrule", "\\end{tabular}", "\\end{table}", ""]
+    (tbl / "subgroups_compact.tex").write_text("\n".join(lines))
 
 
 def latex_table(df: pl.DataFrame, path, caption: str, label: str, col_fmt: dict | None = None, escape: bool = True):

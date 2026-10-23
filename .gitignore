@@ -22,10 +22,9 @@ __pycache__/
 # notebooks checkpoints
 .ipynb_checkpoints/
 
-# Report is maintained in Overleaf
+# report lives in its own repo (project1-bridge-dx-report); nothing report-related is kept here
 report/*
 !report/.gitkeep
-!report/make_report_figures.py
 
 # os / editor
 .DS_Store
